@@ -1,26 +1,26 @@
 # Web Framework
-fastapi==0.115.12
-uvicorn[standard]==0.34.3
+fastapi>=0.110.0
+uvicorn[standard]>=0.30.0
 
 # Job Scraping
-python-jobspy==1.1.75
-requests==2.32.3
-beautifulsoup4==4.13.4
+python-jobspy>=1.1.50
+requests>=2.30.0
+beautifulsoup4>=4.12.0
 
 # AI Analysis
-google-genai==1.14.0
+google-genai>=1.0.0
 
 # Database
-aiosqlite==0.21.0
+aiosqlite>=0.20.0
 
 # Deduplication
-rapidfuzz==3.13.0
+rapidfuzz>=3.0.0
 
 # Scheduling
-apscheduler==3.11.0
+apscheduler>=3.10.0
 
 # Utilities
-python-dotenv==1.1.0
-pydantic==2.11.3
-pydantic-settings==2.9.1
-httpx==0.28.1
+python-dotenv>=1.0.0
+pydantic>=2.7.0
+pydantic-settings>=2.2.0
+httpx>=0.27.0

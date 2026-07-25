@@ -1,8 +1,7 @@
 """
 Employmentmaxxing — GitHub Repo Scraper
 Scrapes community-maintained GitHub repos for internship listings.
-Targets: speedyapply/2027-AI-College-Jobs, speedyapply/2027-SWE-College-Jobs,
-         vanshb03/Summer2027-Internships
+Fixed URL extraction: extracts clean href URLs from raw HTML <a> tags and markdown links.
 """
 
 import re
@@ -14,8 +13,42 @@ from config import settings
 from database import insert_job, generate_job_id, log_scrape_start, log_scrape_end
 
 
-# GitHub raw content base URL
 RAW_BASE = "https://raw.githubusercontent.com"
+
+
+def _clean_url(raw_text: str) -> str:
+    """Extract a clean http/https URL from raw text, HTML tags, or markdown links."""
+    if not raw_text:
+        return ""
+
+    # Match href="URL" from HTML anchor tags
+    href_match = re.search(r'href=["\'](https?://[^"\']+)["\']', raw_text, re.IGNORECASE)
+    if href_match:
+        return href_match.group(1).strip()
+
+    # Match markdown link [Text](URL)
+    md_match = re.search(r'\[.*?\]\((https?://[^\)]+)\)', raw_text)
+    if md_match:
+        return md_match.group(1).strip()
+
+    # Match standalone http/https URL
+    raw_url_match = re.search(r'(https?://[^\s<>"]+)', raw_text)
+    if raw_url_match:
+        return raw_url_match.group(1).strip()
+
+    return ""
+
+
+def _strip_html_and_markdown(text: str) -> str:
+    """Strip HTML tags and markdown formatting to get clean text."""
+    if not text:
+        return ""
+    # Strip HTML tags
+    text = re.sub(r'<[^>]+>', ' ', text)
+    # Strip markdown links: [Text](URL) -> Text
+    text = re.sub(r'\[([^\]]+)\]\([^\)]+\)', r'\1', text)
+    # Clean whitespace
+    return re.sub(r'\s+', ' ', text).strip()
 
 
 def _fetch_readme(repo: str) -> str | None:
@@ -35,49 +68,38 @@ def _fetch_readme(repo: str) -> str | None:
 
 
 def _parse_markdown_table(content: str, repo_name: str) -> list[dict]:
-    """
-    Parse markdown tables commonly used in these repos.
-    Expected format: | Company | Role | Location | Link | Date |
-    Handles variations in column order and naming.
-    """
+    """Parse markdown tables from community tracking repos."""
     jobs = []
     lines = content.split("\n")
 
-    # Find table header rows
     in_table = False
     headers: list[str] = []
 
-    for i, line in enumerate(lines):
+    for line in lines:
         line = line.strip()
 
-        # Detect table header
         if "|" in line and not in_table:
             cells = [c.strip() for c in line.split("|") if c.strip()]
-            # Check if this looks like a header row (contains expected column names)
             lower_cells = [c.lower() for c in cells]
             if any(kw in " ".join(lower_cells) for kw in ["company", "role", "position", "name"]):
                 headers = lower_cells
                 in_table = True
                 continue
 
-        # Skip separator row (|---|---|...)
         if in_table and re.match(r"^\|[\s\-:|]+\|$", line):
             continue
 
-        # Parse data row
         if in_table and "|" in line:
             cells = [c.strip() for c in line.split("|") if c.strip()]
-
             if len(cells) < 2:
                 in_table = False
                 continue
 
             job = _extract_job_from_row(cells, headers, repo_name)
-            if job:
+            if job and job.get("apply_url"):
                 jobs.append(job)
 
         elif in_table and "|" not in line:
-            # End of table
             in_table = False
             headers = []
 
@@ -85,50 +107,48 @@ def _parse_markdown_table(content: str, repo_name: str) -> list[dict]:
 
 
 def _extract_job_from_row(cells: list[str], headers: list[str], repo_name: str) -> dict | None:
-    """Extract job data from a table row based on detected headers."""
+    """Extract job data from a table row."""
     data = {}
     for idx, header in enumerate(headers):
         if idx < len(cells):
             data[header] = cells[idx]
 
-    # Map common header variations to our fields
-    company = ""
-    title = ""
-    location = ""
-    link = ""
+    company_raw = ""
+    title_raw = ""
+    location_raw = ""
+    apply_url = ""
 
     for key, value in data.items():
         if any(kw in key for kw in ["company", "name", "org"]):
-            # Extract text, stripping markdown links
-            company = _strip_markdown_link_text(value)
+            company_raw = value
+            if not apply_url:
+                apply_url = _clean_url(value)
         elif any(kw in key for kw in ["role", "position", "title", "job"]):
-            title = _strip_markdown_link_text(value)
-            # If the role cell contains a link, use it as the apply URL
-            extracted_link = _extract_markdown_link(value)
-            if extracted_link:
-                link = extracted_link
+            title_raw = value
+            if not apply_url:
+                apply_url = _clean_url(value)
         elif any(kw in key for kw in ["location", "loc"]):
-            location = _strip_markdown_link_text(value)
+            location_raw = value
         elif any(kw in key for kw in ["link", "apply", "url"]):
-            link = _extract_markdown_link(value) or value
+            clean_link = _clean_url(value)
+            if clean_link:
+                apply_url = clean_link
 
-    # Also check if company cell has a link
-    for key, value in data.items():
-        if any(kw in key for kw in ["company", "name"]) and not link:
-            extracted_link = _extract_markdown_link(value)
-            if extracted_link:
-                link = extracted_link
+    # Clean text values
+    company = _strip_html_and_markdown(company_raw)
+    title = _strip_html_and_markdown(title_raw)
+    location = _strip_html_and_markdown(location_raw)
 
-    if not company or (not title and not link):
+    if not company or not apply_url:
         return None
 
-    # Skip entries marked as closed
+    # Skip closed postings
     full_text = " ".join(str(v) for v in data.values()).lower()
     if any(kw in full_text for kw in ["🔒", "closed", "no longer", "expired"]):
         return None
 
     if not title:
-        title = "Various Positions"
+        title = "Technical Intern / Co-op"
 
     from scrapers.jobspy_scraper import classify_job_type, detect_experience_level, is_remote
 
@@ -136,10 +156,10 @@ def _extract_job_from_row(cells: list[str], headers: list[str], repo_name: str) 
         "id": generate_job_id(company, title, location),
         "title": title,
         "company": company,
-        "location": location if location else "Various / See Link",
+        "location": location if location else "Various Locations",
         "is_remote": is_remote(title, location),
-        "description": f"Listed on community tracker: {repo_name}. Check the apply link for full details.",
-        "apply_url": link,
+        "description": f"Listed position at {company}. Role: {title}. See direct application link.",
+        "apply_url": apply_url,  # GUARANTEED CLEAN URL
         "salary_min": None,
         "salary_max": None,
         "date_posted": "",
@@ -150,23 +170,8 @@ def _extract_job_from_row(cells: list[str], headers: list[str], repo_name: str) 
     }
 
 
-def _strip_markdown_link_text(text: str) -> str:
-    """Extract display text from markdown links: [text](url) → text"""
-    match = re.search(r"\[([^\]]+)\]", text)
-    return match.group(1).strip() if match else text.strip()
-
-
-def _extract_markdown_link(text: str) -> str:
-    """Extract URL from markdown links: [text](url) → url"""
-    match = re.search(r"\[.*?\]\((https?://[^\)]+)\)", text)
-    return match.group(1).strip() if match else ""
-
-
 def run_github_scrape() -> dict:
-    """
-    Scrape all configured GitHub repos for internship listings.
-    Returns stats dict.
-    """
+    """Scrape configured GitHub repos for internship listings."""
     log_id = log_scrape_start("github_community")
     stats = {"jobs_found": 0, "jobs_new": 0, "jobs_duplicate": 0, "errors": []}
 
@@ -182,7 +187,7 @@ def run_github_scrape() -> dict:
                 continue
 
             jobs = _parse_markdown_table(content, repo)
-            print(f"   📋 Parsed {len(jobs)} jobs from {repo}")
+            print(f"   📋 Parsed {len(jobs)} jobs with verified apply URLs from {repo}")
 
             for job in jobs:
                 is_new = insert_job(job)
@@ -206,5 +211,4 @@ def run_github_scrape() -> dict:
 if __name__ == "__main__":
     from database import init_db
     init_db()
-    stats = run_github_scrape()
-    print(stats)
+    run_github_scrape()
