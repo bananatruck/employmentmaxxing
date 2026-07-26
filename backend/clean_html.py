@@ -1,6 +1,6 @@
 """
-Employmentmaxxing — Thorough HTML & Formatting Sanitizer
-Strips raw HTML tags, unescapes entities, and cleans titles, companies, locations, and descriptions.
+Employmentmaxxing — Thorough HTML & Senior Role Filter Sanitizer
+Strips raw HTML tags, unescapes entities, purges Senior/Lead/Manager roles, and verifies direct URLs.
 """
 
 import re
@@ -8,22 +8,38 @@ import html
 from bs4 import BeautifulSoup
 import database
 
+SENIOR_EXCLUSIONS = [
+    "senior", "sr.", "sr ", "lead", "principal", "director", "manager", "vp",
+    "vice president", "head of", "staff", "architect", "executive", "chief",
+]
+
+ALLOWED_STUDENT_KWS = ["intern", "internship", "student", "co-op", "coop", "entry"]
+
+
+def is_senior_role(title: str) -> bool:
+    """Check if a title is a Senior/Lead/Manager role (unless student/intern)."""
+    t_lower = title.lower()
+    
+    # If it explicitly mentions intern/co-op/student, allow it
+    if any(skw in t_lower for skw in ALLOWED_STUDENT_KWS):
+        return False
+
+    # Check for senior exclusions
+    for ex in SENIOR_EXCLUSIONS:
+        if ex in t_lower:
+            return True
+    return False
+
 
 def strip_html(raw_text: str) -> str:
     """Completely strip all HTML tags and unescape entities."""
     if not raw_text:
         return ""
 
-    # Unescape HTML entities first (&amp;, &lt;, &gt;, &quot;, &apos;, &#39;, etc.)
     text = html.unescape(raw_text)
-
-    # Use BeautifulSoup to parse away tags
     soup = BeautifulSoup(text, "html.parser")
     cleaned = soup.get_text(separator=" ", strip=True)
-
-    # Remove extra spaces
-    cleaned = re.sub(r"\s+", " ", cleaned).strip()
-    return cleaned
+    return re.sub(r"\s+", " ", cleaned).strip()
 
 
 def sanitize_all_jobs():
@@ -44,22 +60,30 @@ def sanitize_all_jobs():
         desc_raw = j["description"]
         apply_url_raw = j["apply_url"]
 
-        # Clean text fields
         title = strip_html(title_raw)
         company = strip_html(company_raw)
         location = strip_html(location_raw)
         description = strip_html(desc_raw)
 
-        # Fix company artifacts like "↳" or empty names
+        # 1. Filter out Senior / Lead roles
+        if is_senior_role(title):
+            conn.execute("DELETE FROM chance_scores WHERE job_id = ?", (job_id,))
+            conn.execute("DELETE FROM job_analysis WHERE job_id = ?", (job_id,))
+            conn.execute("DELETE FROM applications WHERE job_id = ?", (job_id,))
+            conn.execute("DELETE FROM jobs WHERE id = ?", (job_id,))
+            deleted_invalid += 1
+            continue
+
         if company == "↳" or not company:
             company = "Top Tech Company"
 
-        # Ensure valid URL
         match = re.search(r"https?://[^\s<>\"\']+", apply_url_raw or "")
         apply_url = match.group(0).rstrip('">\'') if match else ""
 
         if not apply_url or not title:
-            # Delete corrupted rows without valid URL or title
+            conn.execute("DELETE FROM chance_scores WHERE job_id = ?", (job_id,))
+            conn.execute("DELETE FROM job_analysis WHERE job_id = ?", (job_id,))
+            conn.execute("DELETE FROM applications WHERE job_id = ?", (job_id,))
             conn.execute("DELETE FROM jobs WHERE id = ?", (job_id,))
             deleted_invalid += 1
             continue
@@ -73,7 +97,7 @@ def sanitize_all_jobs():
 
     conn.commit()
     conn.close()
-    print(f"✅ Cleaned {updated} jobs. Removed {deleted_invalid} corrupted/invalid listings.")
+    print(f"✅ Cleaned {updated} jobs. Purged {deleted_invalid} Senior/Lead/corrupted roles.")
 
 
 if __name__ == "__main__":

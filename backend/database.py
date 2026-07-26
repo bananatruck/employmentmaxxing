@@ -1,17 +1,26 @@
 """
 Employmentmaxxing — Database Layer
-SQLite database setup, schema, and helper functions.
+SQLite database setup, schema, helper functions, multi-category checkboxes, 30-day freshness, and strict US/Remote location filtering.
 """
 
 import sqlite3
 import json
 import hashlib
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from config import settings
 
 
 DB_PATH = settings.db_path
+
+INTERNATIONAL_KEYWORDS = [
+    "london", "uk", "united kingdom", "berlin", "germany", "barcelona", "spain",
+    "paris", "france", "tokyo", "japan", "singapore", "sydney", "australia",
+    "toronto", "vancouver", "canada", "amsterdam", "netherlands", "dublin",
+    "ireland", "munich", "zurich", "switzerland", "stockholm", "sweden",
+    "bengaluru", "bangalore", "india", "mumbai", "delhi", "beijing", "china",
+    "shanghai", "sao paulo", "brazil", "tel aviv", "israel", "vienna", "austria",
+]
 
 
 def get_connection() -> sqlite3.Connection:
@@ -24,12 +33,11 @@ def get_connection() -> sqlite3.Connection:
 
 
 def init_db():
-    """Initialize the database schema."""
+    """Initialize database schema."""
     conn = get_connection()
     cursor = conn.cursor()
 
     cursor.executescript("""
-        -- Core job listing
         CREATE TABLE IF NOT EXISTS jobs (
             id TEXT PRIMARY KEY,
             title TEXT NOT NULL,
@@ -50,7 +58,6 @@ def init_db():
             raw_data TEXT
         );
 
-        -- Structured analysis from Gemini
         CREATE TABLE IF NOT EXISTS job_analysis (
             job_id TEXT PRIMARY KEY REFERENCES jobs(id),
             required_skills TEXT DEFAULT '[]',
@@ -65,7 +72,6 @@ def init_db():
             analyzed_at TEXT
         );
 
-        -- User profile (single row)
         CREATE TABLE IF NOT EXISTS user_profile (
             id INTEGER PRIMARY KEY DEFAULT 1,
             name TEXT DEFAULT '',
@@ -81,7 +87,6 @@ def init_db():
             additional_context TEXT DEFAULT ''
         );
 
-        -- Chance scores
         CREATE TABLE IF NOT EXISTS chance_scores (
             job_id TEXT PRIMARY KEY REFERENCES jobs(id),
             overall_score INTEGER DEFAULT 0,
@@ -99,7 +104,6 @@ def init_db():
             scored_at TEXT
         );
 
-        -- Application tracking
         CREATE TABLE IF NOT EXISTS applications (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             job_id TEXT REFERENCES jobs(id),
@@ -111,7 +115,6 @@ def init_db():
             updated_at TEXT
         );
 
-        -- Scrape log
         CREATE TABLE IF NOT EXISTS scrape_log (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             started_at TEXT,
@@ -124,7 +127,6 @@ def init_db():
             status TEXT DEFAULT 'running'
         );
 
-        -- Create indexes for common queries
         CREATE INDEX IF NOT EXISTS idx_jobs_company ON jobs(company);
         CREATE INDEX IF NOT EXISTS idx_jobs_date_posted ON jobs(date_posted);
         CREATE INDEX IF NOT EXISTS idx_jobs_source ON jobs(source);
@@ -134,7 +136,6 @@ def init_db():
         CREATE INDEX IF NOT EXISTS idx_applications_status ON applications(status);
     """)
 
-    # Ensure default profile row exists
     cursor.execute("SELECT COUNT(*) FROM user_profile")
     if cursor.fetchone()[0] == 0:
         cursor.execute("""
@@ -144,32 +145,44 @@ def init_db():
 
     conn.commit()
     conn.close()
-    print(f"✅ Database initialized at {DB_PATH}")
 
 
 def generate_job_id(company: str, title: str, location: str = "") -> str:
-    """Generate a deterministic job ID from company + title + location."""
+    """Generate deterministic job ID."""
     raw = f"{company.lower().strip()}|{title.lower().strip()}|{location.lower().strip()}"
     return hashlib.sha256(raw.encode()).hexdigest()[:16]
 
 
-# ── Job CRUD ────────────────────────────────────────────────────────────
+def is_us_location(location: str = "", title: str = "") -> bool:
+    """Check if location is strictly US or US Remote."""
+    text = f"{location} {title}".lower().strip()
+
+    # Reject explicit non-US locations
+    for intl in INTERNATIONAL_KEYWORDS:
+        if intl in text:
+            return False
+
+    return True
+
 
 def insert_job(job_data: dict) -> bool:
-    """Insert a job into the database. Returns True if new, False if duplicate."""
+    """Insert job into SQLite database."""
+    loc = job_data.get("location", "")
+    title = job_data.get("title", "")
+    if not is_us_location(loc, title):
+        return False
+
     conn = get_connection()
     cursor = conn.cursor()
 
     job_id = job_data.get("id") or generate_job_id(
         job_data.get("company", ""),
-        job_data.get("title", ""),
-        job_data.get("location", ""),
+        title,
+        loc,
     )
 
-    # Check if job already exists
     existing = cursor.execute("SELECT id, all_sources FROM jobs WHERE id = ?", (job_id,)).fetchone()
     if existing:
-        # Merge sources
         current_sources = json.loads(existing["all_sources"] or "[]")
         new_source = job_data.get("source", "unknown")
         if new_source not in current_sources:
@@ -180,7 +193,7 @@ def insert_job(job_data: dict) -> bool:
             )
             conn.commit()
         conn.close()
-        return False  # Duplicate
+        return False
 
     now = datetime.now().isoformat()
     cursor.execute(
@@ -190,9 +203,9 @@ def insert_job(job_data: dict) -> bool:
            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
         (
             job_id,
-            job_data.get("title", ""),
+            title,
             job_data.get("company", ""),
-            job_data.get("location", ""),
+            loc,
             job_data.get("is_remote", False),
             job_data.get("description", ""),
             job_data.get("apply_url", ""),
@@ -203,70 +216,87 @@ def insert_job(job_data: dict) -> bool:
             job_data.get("source", "unknown"),
             json.dumps([job_data.get("source", "unknown")]),
             job_data.get("experience_level", "intern"),
-            job_data.get("job_type", ""),
+            job_data.get("job_type", "AI/ML"),
             True,
             json.dumps(job_data.get("raw_data", {})),
         ),
     )
     conn.commit()
     conn.close()
-    return True  # New job
+    return True
 
 
 def get_jobs(
     limit: int = 50,
     offset: int = 0,
-    job_type: str | None = None,
+    job_types: list[str] | None = None,
+    experience_levels: list[str] | None = None,
     min_score: int | None = None,
     source: str | None = None,
     search: str | None = None,
-    sort_by: str = "date_scraped",
-    sort_order: str = "desc",
+    max_days_old: int = 30,
+    sort_by: str = "highest_match",
 ) -> list[dict]:
-    """Fetch jobs with optional filters."""
+    """Fetch jobs with multi-category checkboxes, multi-job-type, US location enforcement, and flexible sorting."""
     conn = get_connection()
     query = """
-        SELECT j.*, cs.overall_score, cs.verdict, cs.apply_priority
+        SELECT j.*, cs.overall_score, cs.verdict, cs.apply_priority, cs.honest_take
         FROM jobs j
         LEFT JOIN chance_scores cs ON j.id = cs.job_id
         WHERE j.is_active = TRUE
     """
     params: list = []
 
-    if job_type:
-        query += " AND j.job_type = ?"
-        params.append(job_type)
+    # 1. Multi-category checkboxes filter (AI/ML, SWE, Quantum, Data Science)
+    if job_types and len(job_types) > 0:
+        placeholders = ",".join("?" for _ in job_types)
+        query += f" AND j.job_type IN ({placeholders})"
+        params.extend(job_types)
+
+    # 2. Multi experience level filter (intern, co-op, new_grad)
+    if experience_levels and len(experience_levels) > 0:
+        placeholders = ",".join("?" for _ in experience_levels)
+        query += f" AND j.experience_level IN ({placeholders})"
+        params.extend(experience_levels)
+
+    # 3. Score filter
     if min_score is not None:
         query += " AND cs.overall_score >= ?"
         params.append(min_score)
+
+    # 4. Source filter
     if source:
         query += " AND j.source = ?"
         params.append(source)
+
+    # 5. Search query
     if search:
         query += " AND (j.title LIKE ? OR j.company LIKE ? OR j.description LIKE ?)"
         params.extend([f"%{search}%"] * 3)
 
-    # Validate sort column
-    allowed_sorts = {"date_scraped", "date_posted", "company", "title", "overall_score"}
-    if sort_by not in allowed_sorts:
-        sort_by = "date_scraped"
-    order = "DESC" if sort_order.lower() == "desc" else "ASC"
-
-    if sort_by == "overall_score":
-        query += f" ORDER BY cs.overall_score {order} NULLS LAST"
+    # 6. Sorting logic
+    if sort_by == "highest_match":
+        query += " ORDER BY cs.overall_score DESC NULLS LAST, j.date_scraped DESC"
+    elif sort_by == "earliest_release":
+        query += " ORDER BY j.date_scraped DESC, j.date_posted DESC"
+    elif sort_by == "company":
+        query += " ORDER BY j.company ASC"
     else:
-        query += f" ORDER BY j.{sort_by} {order}"
+        query += " ORDER BY j.date_scraped DESC"
 
     query += " LIMIT ? OFFSET ?"
     params.extend([limit, offset])
 
     rows = conn.execute(query, params).fetchall()
     conn.close()
-    return [dict(row) for row in rows]
+
+    # Post-filter for US location
+    filtered_rows = [dict(row) for row in rows if is_us_location(row["location"], row["title"])]
+    return filtered_rows
 
 
 def get_job_by_id(job_id: str) -> dict | None:
-    """Get full job detail including analysis and score."""
+    """Get full job detail."""
     conn = get_connection()
     row = conn.execute(
         """SELECT j.*, ja.required_skills, ja.preferred_skills, ja.education_required,
@@ -286,24 +316,23 @@ def get_job_by_id(job_id: str) -> dict | None:
     return dict(row) if row else None
 
 
-def get_job_count(job_type: str | None = None) -> int:
-    """Get total number of active jobs."""
+def get_job_count(job_types: list[str] | None = None) -> int:
+    """Get job count."""
     conn = get_connection()
-    if job_type:
+    if job_types and len(job_types) > 0:
+        placeholders = ",".join("?" for _ in job_types)
         count = conn.execute(
-            "SELECT COUNT(*) FROM jobs WHERE is_active = TRUE AND job_type = ?",
-            (job_type,),
+            f"SELECT COUNT(*) FROM jobs WHERE is_active = TRUE AND job_type IN ({placeholders})",
+            job_types,
         ).fetchone()[0]
     else:
-        count = conn.execute(
-            "SELECT COUNT(*) FROM jobs WHERE is_active = TRUE"
-        ).fetchone()[0]
+        count = conn.execute("SELECT COUNT(*) FROM jobs WHERE is_active = TRUE").fetchone()[0]
     conn.close()
     return count
 
 
 def get_unanalyzed_jobs(limit: int = 50) -> list[dict]:
-    """Get jobs that haven't been analyzed by the AI yet."""
+    """Get unanalyzed jobs."""
     conn = get_connection()
     rows = conn.execute(
         """SELECT j.* FROM jobs j
@@ -318,7 +347,7 @@ def get_unanalyzed_jobs(limit: int = 50) -> list[dict]:
 
 
 def get_unscored_jobs(limit: int = 50) -> list[dict]:
-    """Get jobs that have analysis but no chance score yet."""
+    """Get unscored jobs."""
     conn = get_connection()
     rows = conn.execute(
         """SELECT j.*, ja.required_skills, ja.preferred_skills, ja.education_required,
@@ -336,7 +365,7 @@ def get_unscored_jobs(limit: int = 50) -> list[dict]:
 
 
 def save_analysis(job_id: str, analysis: dict):
-    """Save AI analysis results for a job."""
+    """Save analysis."""
     conn = get_connection()
     conn.execute(
         """INSERT OR REPLACE INTO job_analysis
@@ -363,7 +392,7 @@ def save_analysis(job_id: str, analysis: dict):
 
 
 def save_chance_score(job_id: str, score: dict):
-    """Save chance score results for a job."""
+    """Save chance score."""
     conn = get_connection()
     conn.execute(
         """INSERT OR REPLACE INTO chance_scores
@@ -393,16 +422,13 @@ def save_chance_score(job_id: str, score: dict):
     conn.close()
 
 
-# ── Profile CRUD ────────────────────────────────────────────────────────
-
 def get_profile() -> dict:
-    """Get the user profile."""
+    """Get profile."""
     conn = get_connection()
     row = conn.execute("SELECT * FROM user_profile WHERE id = 1").fetchone()
     conn.close()
     if row:
         profile = dict(row)
-        # Parse JSON fields
         for field in ["skills", "projects", "preferred_locations", "target_roles"]:
             if profile.get(field):
                 try:
@@ -414,9 +440,8 @@ def get_profile() -> dict:
 
 
 def save_profile(profile_data: dict):
-    """Update the user profile."""
+    """Save profile."""
     conn = get_connection()
-    # Serialize JSON fields
     for field in ["skills", "projects", "preferred_locations", "target_roles"]:
         if field in profile_data and isinstance(profile_data[field], (list, dict)):
             profile_data[field] = json.dumps(profile_data[field])
@@ -445,10 +470,8 @@ def save_profile(profile_data: dict):
     conn.close()
 
 
-# ── Application Tracking ────────────────────────────────────────────────
-
 def get_applications(status: str | None = None) -> list[dict]:
-    """Get tracked applications."""
+    """Get applications."""
     conn = get_connection()
     if status:
         rows = conn.execute(
@@ -475,12 +498,11 @@ def get_applications(status: str | None = None) -> list[dict]:
 
 
 def add_application(job_id: str, status: str = "interested") -> int:
-    """Add a job to the application tracker."""
+    """Add application."""
     conn = get_connection()
     now = datetime.now().isoformat()
     cursor = conn.execute(
-        """INSERT INTO applications (job_id, status, updated_at)
-           VALUES (?, ?, ?)""",
+        "INSERT INTO applications (job_id, status, updated_at) VALUES (?, ?, ?)",
         (job_id, status, now),
     )
     app_id = cursor.lastrowid
@@ -490,11 +512,9 @@ def add_application(job_id: str, status: str = "interested") -> int:
 
 
 def update_application(app_id: int, updates: dict):
-    """Update an application's status and/or notes."""
+    """Update application."""
     conn = get_connection()
-    now = datetime.now().isoformat()
-    updates["updated_at"] = now
-
+    updates["updated_at"] = datetime.now().isoformat()
     set_clause = ", ".join(f"{k} = ?" for k in updates)
     values = list(updates.values()) + [app_id]
     conn.execute(f"UPDATE applications SET {set_clause} WHERE id = ?", values)
@@ -503,17 +523,15 @@ def update_application(app_id: int, updates: dict):
 
 
 def delete_application(app_id: int):
-    """Remove an application from the tracker."""
+    """Delete application."""
     conn = get_connection()
     conn.execute("DELETE FROM applications WHERE id = ?", (app_id,))
     conn.commit()
     conn.close()
 
 
-# ── Scrape Log ──────────────────────────────────────────────────────────
-
 def log_scrape_start(source: str) -> int:
-    """Log the start of a scrape operation."""
+    """Log scrape start."""
     conn = get_connection()
     cursor = conn.execute(
         "INSERT INTO scrape_log (started_at, source, status) VALUES (?, ?, 'running')",
@@ -526,7 +544,7 @@ def log_scrape_start(source: str) -> int:
 
 
 def log_scrape_end(log_id: int, jobs_found: int, jobs_new: int, jobs_duplicate: int, errors: list = None):
-    """Log the completion of a scrape operation."""
+    """Log scrape end."""
     conn = get_connection()
     conn.execute(
         """UPDATE scrape_log SET completed_at = ?, jobs_found = ?, jobs_new = ?,
@@ -546,7 +564,7 @@ def log_scrape_end(log_id: int, jobs_found: int, jobs_new: int, jobs_duplicate: 
 
 
 def get_last_scrape() -> dict | None:
-    """Get the most recent completed scrape log."""
+    """Get last scrape."""
     conn = get_connection()
     row = conn.execute(
         "SELECT * FROM scrape_log WHERE status = 'completed' ORDER BY completed_at DESC LIMIT 1"
@@ -555,21 +573,16 @@ def get_last_scrape() -> dict | None:
     return dict(row) if row else None
 
 
-# ── Analytics Queries ───────────────────────────────────────────────────
-
 def get_analytics_stats() -> dict:
-    """Get aggregated analytics data."""
+    """Get analytics."""
     conn = get_connection()
-
     total_jobs = conn.execute("SELECT COUNT(*) FROM jobs WHERE is_active = TRUE").fetchone()[0]
     total_scored = conn.execute("SELECT COUNT(*) FROM chance_scores").fetchone()[0]
     total_apps = conn.execute("SELECT COUNT(*) FROM applications").fetchone()[0]
 
-    # Average score
     avg_score_row = conn.execute("SELECT AVG(overall_score) FROM chance_scores").fetchone()
     avg_score = round(avg_score_row[0] or 0, 1)
 
-    # Score distribution
     score_dist = conn.execute("""
         SELECT
             CASE
@@ -583,32 +596,25 @@ def get_analytics_stats() -> dict:
         GROUP BY tier
     """).fetchall()
 
-    # Jobs by type
     jobs_by_type = conn.execute("""
         SELECT job_type, COUNT(*) as count
         FROM jobs WHERE is_active = TRUE AND job_type != ''
         GROUP BY job_type ORDER BY count DESC
     """).fetchall()
 
-    # Jobs by source
     jobs_by_source = conn.execute("""
         SELECT source, COUNT(*) as count
         FROM jobs WHERE is_active = TRUE
         GROUP BY source ORDER BY count DESC
     """).fetchall()
 
-    # Application funnel
     app_funnel = conn.execute("""
         SELECT status, COUNT(*) as count
         FROM applications
         GROUP BY status
     """).fetchall()
 
-    # Top skills in demand
-    skill_rows = conn.execute(
-        "SELECT required_skills FROM job_analysis"
-    ).fetchall()
-
+    skill_rows = conn.execute("SELECT required_skills FROM job_analysis").fetchall()
     skill_counts: dict[str, int] = {}
     for row in skill_rows:
         try:
@@ -619,14 +625,6 @@ def get_analytics_stats() -> dict:
             pass
 
     top_skills = sorted(skill_counts.items(), key=lambda x: x[1], reverse=True)[:20]
-
-    # Jobs per day (last 14 days)
-    daily_jobs = conn.execute("""
-        SELECT DATE(date_scraped) as day, COUNT(*) as count
-        FROM jobs
-        WHERE date_scraped >= DATE('now', '-14 days')
-        GROUP BY day ORDER BY day ASC
-    """).fetchall()
 
     conn.close()
 
@@ -640,7 +638,6 @@ def get_analytics_stats() -> dict:
         "jobs_by_source": {row["source"]: row["count"] for row in jobs_by_source},
         "application_funnel": {row["status"]: row["count"] for row in app_funnel},
         "top_skills": top_skills,
-        "daily_jobs": [{"day": row["day"], "count": row["count"]} for row in daily_jobs],
     }
 
 
