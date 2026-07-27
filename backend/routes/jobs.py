@@ -27,14 +27,16 @@ def list_jobs(
     search: str | None = None,
     max_days_old: int = Query(30, description="Max posting age in days"),
     sort_by: str = Query("earliest_release", enum=["highest_match", "earliest_release", "date_scraped", "company"]),
+    ats_provider: str | None = Query(None, description="Filter by ATS provider (greenhouse, workday)"),
+    ats_board_key: str | None = Query(None, description="Filter by ATS board key"),
 ):
-    """List jobs with company tier filtering, multi-category checkboxes, and date sorting."""
+    """List jobs with company tier filtering, ATS provider filtering, multi-category checkboxes, and date sorting."""
     type_list = [t.strip() for t in job_types.split(",") if t.strip()] if job_types else None
     exp_list = [e.strip() for e in experience_levels.split(",") if e.strip()] if experience_levels else None
 
     # Retrieve candidate jobs
     jobs = database.get_jobs(
-        limit=limit * 3 if company_tier else limit,
+        limit=limit * 3 if (company_tier or ats_provider or ats_board_key) else limit,
         offset=offset,
         job_types=type_list,
         experience_levels=exp_list,
@@ -44,6 +46,12 @@ def list_jobs(
         max_days_old=max_days_old,
         sort_by=sort_by,
     )
+
+    # Filter by ATS Provider / Board Key if specified
+    if ats_provider:
+        jobs = [j for j in jobs if j.get("ats_provider") == ats_provider]
+    if ats_board_key:
+        jobs = [j for j in jobs if j.get("ats_board_key") == ats_board_key]
 
     # Filter by Company Tier if specified
     if company_tier == "top_10":

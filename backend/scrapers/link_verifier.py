@@ -3,6 +3,7 @@ Employmentmaxxing — Link Verification Layer
 Performs fast HTTP checks on apply_url links to verify they are active and not 404/expired.
 """
 
+# pyrefly: ignore [missing-import]
 import httpx
 import asyncio
 import re
@@ -18,6 +19,10 @@ EXPIRED_INDICATORS = [
     "career site unavailable",
     "this posting has expired",
     "no longer accepting applications",
+    "no longer active",
+    "job board you were viewing",
+    "page not found",
+    "error=true",
 ]
 
 
@@ -27,30 +32,28 @@ async def check_url_active(client: httpx.AsyncClient, url: str) -> bool:
         return False
 
     try:
-        # Try HEAD request first for speed
-        resp = await client.head(url, follow_redirects=True, timeout=5.0)
+        # Use GET with follow_redirects to inspect both status, final URL, and content
+        resp = await client.get(url, follow_redirects=True, timeout=5.0)
+        final_url = str(resp.url).lower()
+
         if resp.status_code == 404 or resp.status_code >= 500:
             return False
 
-        if resp.status_code == 200:
-            return True
-
-        # Fall back to GET request if HEAD is not supported by target domain
-        resp_get = await client.get(url, follow_redirects=True, timeout=5.0)
-        if resp_get.status_code == 404 or resp_get.status_code >= 500:
+        if "error=true" in final_url or "error=1" in final_url or "page-not-found" in final_url:
             return False
 
         # Check response body for dead job keywords
-        text_lower = resp_get.text.lower()
+        text_lower = resp.text.lower()
         for kw in EXPIRED_INDICATORS:
             if kw in text_lower:
                 return False
 
-        return True
+        return resp.status_code == 200
 
     except Exception:
         # If connection fails completely, mark inactive
         return False
+
 
 
 async def verify_database_links_async(limit: int = 100) -> dict:

@@ -130,6 +130,45 @@ def init_db():
             status TEXT DEFAULT 'running'
         );
 
+        CREATE TABLE IF NOT EXISTS ats_boards (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            provider TEXT NOT NULL,
+            board_key TEXT NOT NULL,
+            company_name TEXT NOT NULL,
+            board_token TEXT,
+            tenant TEXT,
+            instance TEXT,
+            site TEXT,
+            canonical_url TEXT NOT NULL,
+            discovery_source TEXT NOT NULL,
+            discovered_at TEXT NOT NULL,
+            last_successful_scan TEXT,
+            next_scan TEXT,
+            failure_count INTEGER DEFAULT 0,
+            status TEXT DEFAULT 'active',
+            last_job_count INTEGER DEFAULT 0,
+            http_cache_meta TEXT DEFAULT '{}',
+            UNIQUE(provider, board_key)
+        );
+
+        CREATE TABLE IF NOT EXISTS ats_run_lock (
+            id INTEGER PRIMARY KEY DEFAULT 1,
+            is_locked BOOLEAN DEFAULT FALSE,
+            locked_at TEXT,
+            locked_by TEXT
+        );
+
+        CREATE TABLE IF NOT EXISTS ats_scan_checkpoints (
+            provider TEXT NOT NULL,
+            board_key TEXT NOT NULL,
+            status TEXT NOT NULL,
+            jobs_found INTEGER DEFAULT 0,
+            started_at TEXT,
+            completed_at TEXT,
+            error_message TEXT,
+            PRIMARY KEY(provider, board_key)
+        );
+
         CREATE INDEX IF NOT EXISTS idx_jobs_company ON jobs(company);
         CREATE INDEX IF NOT EXISTS idx_jobs_date_posted ON jobs(date_posted);
         CREATE INDEX IF NOT EXISTS idx_jobs_source ON jobs(source);
@@ -137,7 +176,33 @@ def init_db():
         CREATE INDEX IF NOT EXISTS idx_jobs_is_active ON jobs(is_active);
         CREATE INDEX IF NOT EXISTS idx_chance_scores_overall ON chance_scores(overall_score);
         CREATE INDEX IF NOT EXISTS idx_applications_status ON applications(status);
+        CREATE INDEX IF NOT EXISTS idx_ats_boards_provider_key ON ats_boards(provider, board_key);
+        CREATE INDEX IF NOT EXISTS idx_ats_boards_status ON ats_boards(status);
     """)
+
+    # Column migrations on jobs table
+    existing_cols = {row[1] for row in cursor.execute("PRAGMA table_info(jobs)").fetchall()}
+    new_cols = [
+        ("ats_provider", "TEXT"),
+        ("ats_board_key", "TEXT"),
+        ("ats_job_id", "TEXT"),
+        ("first_seen_at", "TEXT"),
+        ("last_seen_at", "TEXT"),
+        ("source_updated_at", "TEXT"),
+        ("content_hash", "TEXT"),
+        ("closed_at", "TEXT"),
+    ]
+    for col_name, col_type in new_cols:
+        if col_name not in existing_cols:
+            cursor.execute(f"ALTER TABLE jobs ADD COLUMN {col_name} {col_type}")
+
+    cursor.execute("""
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_jobs_ats_unique 
+        ON jobs(ats_provider, ats_board_key, ats_job_id) 
+        WHERE ats_provider IS NOT NULL AND ats_board_key IS NOT NULL AND ats_job_id IS NOT NULL
+    """)
+
+    cursor.execute("INSERT OR IGNORE INTO ats_run_lock (id, is_locked) VALUES (1, FALSE)")
 
     cursor.execute("SELECT COUNT(*) FROM user_profile")
     if cursor.fetchone()[0] == 0:
@@ -207,18 +272,26 @@ def insert_job(job_data: dict) -> bool:
     raw_posted = job_data.get("date_posted")
     clean_date_posted = normalize_posted_date(raw_posted, default_date=now_iso[:10])
 
+    desc_str = job_data.get("description", "")
+    from scrapers.jobspy_scraper import detect_experience_level, classify_job_type
+    exp_level = job_data.get("experience_level") or detect_experience_level(title, desc_str)
+    j_type = job_data.get("job_type") or classify_job_type(title, desc_str)
+
     cursor.execute(
-        """INSERT INTO jobs (id, title, company, location, is_remote, description,
-           apply_url, salary_min, salary_max, date_posted, date_scraped, source,
-           all_sources, experience_level, job_type, is_active, raw_data)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+        """
+        INSERT INTO jobs (
+            id, title, company, location, is_remote, description, apply_url,
+            salary_min, salary_max, date_posted, date_scraped, source, all_sources,
+            experience_level, job_type, is_active, raw_data
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    """,
         (
             job_id,
             title,
             job_data.get("company", ""),
             loc,
             job_data.get("is_remote", False),
-            job_data.get("description", ""),
+            desc_str,
             job_data.get("apply_url", ""),
             job_data.get("salary_min"),
             job_data.get("salary_max"),
@@ -226,8 +299,8 @@ def insert_job(job_data: dict) -> bool:
             now_iso,
             job_data.get("source", "unknown"),
             json.dumps([job_data.get("source", "unknown")]),
-            job_data.get("experience_level", "intern"),
-            job_data.get("job_type", "AI/ML"),
+            exp_level,
+            j_type,
             True,
             json.dumps(job_data.get("raw_data", {})),
         ),
@@ -660,6 +733,410 @@ def get_analytics_stats() -> dict:
         "jobs_by_source": {row["source"]: row["count"] for row in jobs_by_source},
         "application_funnel": {row["status"]: row["count"] for row in app_funnel},
         "top_skills": top_skills,
+    }
+
+
+def compute_content_hash(title: str, location: str, description: str) -> str:
+    """Generate SHA256 hash of normalized title, location, and description."""
+    raw = f"{title.strip().lower()}|{location.strip().lower()}|{description.strip().lower()}"
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+
+def upsert_ats_board(board_data: dict) -> bool:
+    """Insert or update an ATS board in ats_boards table."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    now_iso = datetime.now().isoformat()
+
+    provider = board_data["provider"]
+    board_key = board_data["board_key"]
+    company_name = board_data["company_name"]
+    canonical_url = board_data["canonical_url"]
+    discovery_source = board_data.get("discovery_source", "manual")
+
+    cursor.execute("""
+        INSERT INTO ats_boards (
+            provider, board_key, company_name, board_token, tenant, instance, site,
+            canonical_url, discovery_source, discovered_at, last_successful_scan,
+            next_scan, failure_count, status, last_job_count, http_cache_meta
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(provider, board_key) DO UPDATE SET
+            company_name = excluded.company_name,
+            canonical_url = excluded.canonical_url,
+            board_token = COALESCE(excluded.board_token, ats_boards.board_token),
+            tenant = COALESCE(excluded.tenant, ats_boards.tenant),
+            instance = COALESCE(excluded.instance, ats_boards.instance),
+            site = COALESCE(excluded.site, ats_boards.site)
+    """, (
+        provider,
+        board_key,
+        company_name,
+        board_data.get("board_token"),
+        board_data.get("tenant"),
+        board_data.get("instance"),
+        board_data.get("site"),
+        canonical_url,
+        discovery_source,
+        now_iso,
+        board_data.get("last_successful_scan"),
+        board_data.get("next_scan"),
+        board_data.get("failure_count", 0),
+        board_data.get("status", "active"),
+        board_data.get("last_job_count", 0),
+        json.dumps(board_data.get("http_cache_meta", {})),
+    ))
+    conn.commit()
+    conn.close()
+    return True
+
+
+def get_ats_boards(provider: str | None = None, status: str | None = None) -> list[dict]:
+    """Retrieve ATS boards filtered by provider and status."""
+    conn = get_connection()
+    query = "SELECT * FROM ats_boards WHERE 1=1"
+    params = []
+    if provider:
+        query += " AND provider = ?"
+        params.append(provider)
+    if status:
+        query += " AND status = ?"
+        params.append(status)
+    query += " ORDER BY company_name ASC"
+    rows = conn.execute(query, params).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+def get_ats_board(provider: str, board_key: str) -> dict | None:
+    """Get single ATS board by provider and board_key."""
+    conn = get_connection()
+    row = conn.execute("SELECT * FROM ats_boards WHERE provider = ? AND board_key = ?", (provider, board_key)).fetchone()
+    conn.close()
+    return dict(row) if row else None
+
+
+def update_ats_board_scan_status(provider: str, board_key: str, success: bool, job_count: int = 0, error: str | None = None):
+    """Update board scan timestamp, job count, failure count, and next scan schedule."""
+    conn = get_connection()
+    now_dt = datetime.now()
+    now_iso = now_dt.isoformat()
+
+    if success:
+        next_scan = (now_dt + timedelta(hours=3)).isoformat()
+        conn.execute("""
+            UPDATE ats_boards SET
+                last_successful_scan = ?,
+                next_scan = ?,
+                failure_count = 0,
+                status = 'active',
+                last_job_count = ?
+            WHERE provider = ? AND board_key = ?
+        """, (now_iso, next_scan, job_count, provider, board_key))
+    else:
+        board = conn.execute("SELECT failure_count FROM ats_boards WHERE provider = ? AND board_key = ?", (provider, board_key)).fetchone()
+        fail_cnt = (board["failure_count"] if board else 0) + 1
+        backoff_hours = min(48, 3 * (2 ** (fail_cnt - 1)))
+        next_scan = (now_dt + timedelta(hours=backoff_hours)).isoformat()
+        new_status = 'failing' if fail_cnt >= 3 else 'active'
+        conn.execute("""
+            UPDATE ats_boards SET
+                next_scan = ?,
+                failure_count = ?,
+                status = ?
+            WHERE provider = ? AND board_key = ?
+        """, (next_scan, fail_cnt, new_status, provider, board_key))
+    conn.commit()
+    conn.close()
+
+
+def acquire_ats_run_lock(locked_by: str = "crawler") -> bool:
+    """Acquire database-backed scan lock."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    row = cursor.execute("SELECT is_locked, locked_at FROM ats_run_lock WHERE id = 1").fetchone()
+    now_iso = datetime.now().isoformat()
+    if row and row["is_locked"]:
+        if row["locked_at"]:
+            try:
+                locked_time = datetime.fromisoformat(row["locked_at"])
+                if datetime.now() - locked_time > timedelta(hours=2):
+                    cursor.execute("UPDATE ats_run_lock SET is_locked = TRUE, locked_at = ?, locked_by = ? WHERE id = 1", (now_iso, locked_by))
+                    conn.commit()
+                    conn.close()
+                    return True
+            except Exception:
+                pass
+        conn.close()
+        return False
+    cursor.execute("UPDATE ats_run_lock SET is_locked = TRUE, locked_at = ?, locked_by = ? WHERE id = 1", (now_iso, locked_by))
+    conn.commit()
+    conn.close()
+    return True
+
+
+def release_ats_run_lock():
+    """Release database-backed scan lock."""
+    conn = get_connection()
+    conn.execute("UPDATE ats_run_lock SET is_locked = FALSE, locked_at = NULL, locked_by = NULL WHERE id = 1")
+    conn.commit()
+    conn.close()
+
+
+def is_ats_run_locked() -> dict:
+    """Get current run lock status."""
+    conn = get_connection()
+    row = conn.execute("SELECT is_locked, locked_at, locked_by FROM ats_run_lock WHERE id = 1").fetchone()
+    conn.close()
+    if not row:
+        return {"is_locked": False, "locked_at": None, "locked_by": None}
+    return dict(row)
+
+
+def record_ats_checkpoint(provider: str, board_key: str, status: str, jobs_found: int = 0, error_message: str | None = None):
+    """Record checkpoint for single board scan execution."""
+    conn = get_connection()
+    now_iso = datetime.now().isoformat()
+    conn.execute("""
+        INSERT INTO ats_scan_checkpoints (provider, board_key, status, jobs_found, started_at, completed_at, error_message)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(provider, board_key) DO UPDATE SET
+            status = excluded.status,
+            jobs_found = excluded.jobs_found,
+            completed_at = CASE WHEN excluded.status IN ('completed', 'failed') THEN excluded.completed_at ELSE ats_scan_checkpoints.completed_at END,
+            error_message = excluded.error_message
+    """, (
+        provider, board_key, status, jobs_found,
+        now_iso, now_iso if status in ('completed', 'failed') else None, error_message
+    ))
+    conn.commit()
+    conn.close()
+
+
+def get_ats_checkpoint(provider: str, board_key: str) -> dict | None:
+    """Get checkpoint state for a board."""
+    conn = get_connection()
+    row = conn.execute("SELECT * FROM ats_scan_checkpoints WHERE provider = ? AND board_key = ?", (provider, board_key)).fetchone()
+    conn.close()
+    return dict(row) if row else None
+
+
+def clear_ats_checkpoints(provider: str | None = None):
+    """Clear scan checkpoints."""
+    conn = get_connection()
+    if provider:
+        conn.execute("DELETE FROM ats_scan_checkpoints WHERE provider = ?", (provider,))
+    else:
+        conn.execute("DELETE FROM ats_scan_checkpoints")
+    conn.commit()
+    conn.close()
+
+
+def upsert_ats_job(job_data: dict) -> dict:
+    """
+    Upsert job using exact ATS identity (provider, board_key, external_job_id) or deterministic ID.
+    Returns result metadata containing: inserted, is_new, is_updated, reason, job_id.
+    """
+    loc = job_data.get("location", "")
+    title = job_data.get("title", "")
+
+    if not is_us_location(loc, title):
+        return {"inserted": False, "is_new": False, "is_updated": False, "reason": "not_us"}
+
+    eligible, reason = is_job_eligible(job_data)
+    if not eligible:
+        return {"inserted": False, "is_new": False, "is_updated": False, "reason": reason}
+
+    conn = get_connection()
+    cursor = conn.cursor()
+    now_iso = datetime.now().isoformat()
+
+    ats_provider = job_data.get("ats_provider")
+    ats_board_key = job_data.get("ats_board_key")
+    ats_job_id = job_data.get("ats_job_id")
+
+    company_name = job_data.get("company", "")
+    job_id = job_data.get("id") or generate_job_id(company_name, title, loc)
+
+    desc = job_data.get("description", "")
+    content_hash = compute_content_hash(title, loc, desc)
+    raw_posted = job_data.get("date_posted")
+    clean_date_posted = normalize_posted_date(raw_posted, default_date=now_iso[:10])
+
+    existing = None
+    if ats_provider and ats_board_key and ats_job_id:
+        existing = cursor.execute(
+            "SELECT id, content_hash, all_sources, is_active FROM jobs WHERE ats_provider = ? AND ats_board_key = ? AND ats_job_id = ?",
+            (ats_provider, ats_board_key, ats_job_id)
+        ).fetchone()
+    if not existing:
+        existing = cursor.execute("SELECT id, content_hash, all_sources, is_active FROM jobs WHERE id = ?", (job_id,)).fetchone()
+
+    if existing:
+        existing_id = existing["id"]
+        current_sources = json.loads(existing["all_sources"] or "[]")
+        new_source = job_data.get("source", "company_official_ats")
+        if new_source not in current_sources:
+            current_sources.append(new_source)
+
+        old_hash = existing["content_hash"]
+        if old_hash != content_hash or not existing["is_active"]:
+            cursor.execute("""
+                UPDATE jobs SET
+                    title = ?,
+                    company = ?,
+                    location = ?,
+                    is_remote = ?,
+                    description = ?,
+                    apply_url = ?,
+                    salary_min = ?,
+                    salary_max = ?,
+                    date_posted = ?,
+                    last_seen_at = ?,
+                    source_updated_at = ?,
+                    content_hash = ?,
+                    is_active = TRUE,
+                    closed_at = NULL,
+                    all_sources = ?,
+                    raw_data = ?
+                WHERE id = ?
+            """, (
+                title,
+                company_name,
+                loc,
+                job_data.get("is_remote", False),
+                desc,
+                job_data.get("apply_url", ""),
+                job_data.get("salary_min"),
+                job_data.get("salary_max"),
+                clean_date_posted,
+                now_iso,
+                now_iso,
+                content_hash,
+                json.dumps(current_sources),
+                json.dumps(job_data.get("raw_data", {})),
+                existing_id,
+            ))
+            conn.commit()
+            conn.close()
+            return {"inserted": True, "is_new": False, "is_updated": True, "job_id": existing_id}
+        else:
+            cursor.execute("""
+                UPDATE jobs SET
+                    last_seen_at = ?,
+                    all_sources = ?
+                WHERE id = ?
+            """, (now_iso, json.dumps(current_sources), existing_id))
+            conn.commit()
+            conn.close()
+            return {"inserted": False, "is_new": False, "is_updated": False, "reason": "duplicate", "job_id": existing_id}
+
+    from scrapers.jobspy_scraper import detect_experience_level, classify_job_type
+    exp_level = job_data.get("experience_level") or detect_experience_level(title, desc)
+    j_type = job_data.get("job_type") or classify_job_type(title, desc)
+
+
+    cursor.execute("""
+        INSERT INTO jobs (
+            id, title, company, location, is_remote, description, apply_url,
+            salary_min, salary_max, date_posted, date_scraped, source, all_sources,
+            experience_level, job_type, is_active, raw_data,
+            ats_provider, ats_board_key, ats_job_id, first_seen_at, last_seen_at,
+            source_updated_at, content_hash, closed_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)
+    """, (
+        job_id,
+        title,
+        company_name,
+        loc,
+        job_data.get("is_remote", False),
+        desc,
+        job_data.get("apply_url", ""),
+        job_data.get("salary_min"),
+        job_data.get("salary_max"),
+        clean_date_posted,
+        now_iso,
+        job_data.get("source", "company_official_ats"),
+        json.dumps([job_data.get("source", "company_official_ats")]),
+        exp_level,
+        j_type,
+        True,
+        json.dumps(job_data.get("raw_data", {})),
+        ats_provider,
+        ats_board_key,
+        ats_job_id,
+        now_iso,
+        now_iso,
+        now_iso,
+        content_hash,
+    ))
+    conn.commit()
+    conn.close()
+    return {"inserted": True, "is_new": True, "is_updated": False, "job_id": job_id}
+
+
+def reconcile_board_deactivations(provider: str, board_key: str, current_scan_job_ids: list[str]) -> int:
+    """
+    Deactivate postings for a board that were NOT found in the latest complete scan.
+    ONLY run after a 100% successful board scan.
+    """
+    conn = get_connection()
+    cursor = conn.cursor()
+    now_iso = datetime.now().isoformat()
+
+    rows = cursor.execute(
+        "SELECT id, ats_job_id FROM jobs WHERE ats_provider = ? AND ats_board_key = ? AND is_active = TRUE",
+        (provider, board_key)
+    ).fetchall()
+
+    seen_set = set(current_scan_job_ids)
+    deactivated = 0
+
+    for r in rows:
+        jid = r["id"]
+        ats_id = r["ats_job_id"]
+        if ats_id not in seen_set and jid not in seen_set:
+            cursor.execute(
+                "UPDATE jobs SET is_active = FALSE, closed_at = ? WHERE id = ?",
+                (now_iso, jid)
+            )
+            deactivated += 1
+
+    conn.commit()
+    conn.close()
+    return deactivated
+
+
+def get_ats_coverage_stats() -> dict:
+    """Return ATS board & job coverage telemetry."""
+    conn = get_connection()
+    boards_total = conn.execute("SELECT COUNT(*) FROM ats_boards").fetchone()[0]
+    boards_active = conn.execute("SELECT COUNT(*) FROM ats_boards WHERE status = 'active'").fetchone()[0]
+    boards_failing = conn.execute("SELECT COUNT(*) FROM ats_boards WHERE status = 'failing'").fetchone()[0]
+
+    last_complete = conn.execute("SELECT MAX(last_successful_scan) FROM ats_boards").fetchone()[0]
+
+    by_provider_rows = conn.execute("""
+        SELECT provider, COUNT(*) as count, SUM(last_job_count) as total_jobs
+        FROM ats_boards
+        GROUP BY provider
+    """).fetchall()
+
+    jobs_ats_total = conn.execute("SELECT COUNT(*) FROM jobs WHERE ats_provider IS NOT NULL AND is_active = TRUE").fetchone()[0]
+    jobs_closed_total = conn.execute("SELECT COUNT(*) FROM jobs WHERE ats_provider IS NOT NULL AND is_active = FALSE AND closed_at IS NOT NULL").fetchone()[0]
+
+    lock = is_ats_run_locked()
+
+    conn.close()
+
+    return {
+        "boards_total": boards_total,
+        "boards_active": boards_active,
+        "boards_failing": boards_failing,
+        "last_complete_coverage_time": last_complete,
+        "by_provider": {r["provider"]: {"boards": r["count"], "jobs": r["total_jobs"] or 0} for r in by_provider_rows},
+        "active_ats_jobs": jobs_ats_total,
+        "closed_ats_jobs": jobs_closed_total,
+        "run_lock": lock,
     }
 
 

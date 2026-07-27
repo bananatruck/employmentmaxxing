@@ -20,7 +20,7 @@ if str(BASE_DIR) not in sys.path:
 from config import settings
 from database import init_db, get_profile
 from scheduler import start_scheduler, stop_scheduler
-from routes import jobs, profile, applications, analytics
+from routes import jobs, profile, applications, analytics, scrape
 
 
 @asynccontextmanager
@@ -74,6 +74,7 @@ app.include_router(jobs.router)
 app.include_router(profile.router)
 app.include_router(applications.router)
 app.include_router(analytics.router)
+app.include_router(scrape.router)
 
 # Mount Frontend Static Assets
 frontend_path = Path(settings.frontend_dir)

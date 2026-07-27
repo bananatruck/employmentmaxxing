@@ -22,7 +22,41 @@ from analysis.jd_parser import run_analysis_pipeline
 from analysis.chance_scorer import run_scoring_pipeline
 
 
+from scrapers.registry import refresh_external_registry
+from scrapers.ats_engine import run_ats_scan_sync
+
+
 _scheduler = None
+
+
+def run_registry_refresh_job():
+    """Daily task refreshing external ATS registry."""
+    print("🌐 [SCHEDULER] Refreshing external ATS registry...")
+    try:
+        counts = refresh_external_registry()
+        print(f"✅ [SCHEDULER] Registry refreshed: {counts.get('total', 0)} total boards")
+    except Exception as e:
+        print(f"⚠️ [SCHEDULER] Registry refresh error: {e}")
+
+
+def run_greenhouse_scan_job():
+    """Incremental Greenhouse scan task."""
+    print("🏢 [SCHEDULER] Starting Greenhouse incremental scan...")
+    try:
+        res = run_ats_scan_sync(providers=["greenhouse"])
+        print(f"✅ [SCHEDULER] Greenhouse scan finished: {res.get('jobs_found', 0)} found, {res.get('jobs_new', 0)} new")
+    except Exception as e:
+        print(f"⚠️ [SCHEDULER] Greenhouse scan error: {e}")
+
+
+def run_workday_scan_job():
+    """Incremental Workday scan task."""
+    print("🏢 [SCHEDULER] Starting Workday incremental scan...")
+    try:
+        res = run_ats_scan_sync(providers=["workday"])
+        print(f"✅ [SCHEDULER] Workday scan finished: {res.get('jobs_found', 0)} found, {res.get('jobs_new', 0)} new")
+    except Exception as e:
+        print(f"⚠️ [SCHEDULER] Workday scan error: {e}")
 
 
 def run_full_pipeline():
@@ -72,6 +106,7 @@ def start_scheduler():
 
     _scheduler = BackgroundScheduler()
 
+    # 1. Full pipeline
     _scheduler.add_job(
         run_full_pipeline,
         'interval',
@@ -80,8 +115,35 @@ def start_scheduler():
         replace_existing=True,
     )
 
+    # 2. Daily registry refresh
+    _scheduler.add_job(
+        run_registry_refresh_job,
+        'interval',
+        hours=getattr(settings, "ats_registry_refresh_hours", 24),
+        id='ats_registry_refresh_job',
+        replace_existing=True,
+    )
+
+    # 3. Greenhouse incremental scan every 3 hours
+    _scheduler.add_job(
+        run_greenhouse_scan_job,
+        'interval',
+        hours=3,
+        id='ats_greenhouse_scan_job',
+        replace_existing=True,
+    )
+
+    # 4. Workday incremental scan every 3 hours
+    _scheduler.add_job(
+        run_workday_scan_job,
+        'interval',
+        hours=3,
+        id='ats_workday_scan_job',
+        replace_existing=True,
+    )
+
     _scheduler.start()
-    print(f"⏰ Scheduler started — running pipeline every {settings.scrape_interval_hours} hours")
+    print(f"⏰ Scheduler started — running pipeline every {settings.scrape_interval_hours} hours and ATS modular tasks")
 
 
 def stop_scheduler():

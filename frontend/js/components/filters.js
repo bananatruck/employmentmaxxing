@@ -57,6 +57,9 @@ export function renderFilters(container, onFilterChange) {
         <label class="checkbox-label">
           <input type="checkbox" value="new_grad" checked> 🚀 Entry-Level / New Grad
         </label>
+        <label class="checkbox-label">
+          <input type="checkbox" value="full_time" checked> 💼 Full-Time SWE / Engineer
+        </label>
       </div>
     </div>
 

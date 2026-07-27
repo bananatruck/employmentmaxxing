@@ -17,42 +17,59 @@ SITES = ["indeed", "linkedin", "glassdoor", "google", "zip_recruiter"]
 
 
 def classify_job_type(title: str, description: str = "") -> str:
-    """Classify a job into our target categories based on title/description keywords."""
+    """Classify a job into target categories based on title/description keywords."""
     text = f"{title} {description}".lower()
 
     quantum_kw = ["quantum", "qiskit", "cirq", "pennylane", "qubit"]
     ai_ml_kw = [
-        "machine learning", "deep learning", "ai ", "artificial intelligence",
+        "machine learning", "deep learning", "ai ", "ai/ml", "artificial intelligence",
         "nlp", "natural language", "computer vision", "ml ", "neural network",
-        "pytorch", "tensorflow", "llm", "generative ai", "data science",
-        "reinforcement learning", "mlops",
+        "pytorch", "tensorflow", "llm", "genai", "generative ai", "ai research",
+        "reinforcement learning", "mlops", "applied scientist", "research scientist",
     ]
+    data_kw = ["data science", "data scientist", "data engineer", "data analyst", "analytics engineer"]
     swe_kw = [
         "software engineer", "software developer", "swe", "full stack",
         "fullstack", "backend", "frontend", "devops", "cloud engineer",
-        "platform engineer", "systems engineer",
+        "platform engineer", "systems engineer", "site reliability", "sre",
+        "infrastructure engineer", "security engineer", "firmware engineer",
     ]
 
     if any(kw in text for kw in quantum_kw):
         return "Quantum"
     if any(kw in text for kw in ai_ml_kw):
         return "AI/ML"
+    if any(kw in text for kw in data_kw):
+        return "Data Science"
     if any(kw in text for kw in swe_kw):
         return "SWE"
-    return "Other"
+    return "SWE" if "engineer" in text or "developer" in text else "Other"
 
 
 def detect_experience_level(title: str, description: str = "") -> str:
-    """Detect experience level from job title/description."""
-    text = f"{title} {description}".lower()
+    """Detect experience level (intern, co-op, new_grad, full_time) from job title/description."""
+    title_lower = (title or "").lower()
+    text_lower = f"{title} {description}".lower()
 
-    if any(kw in text for kw in ["intern", "internship"]):
+    # Precedence 1: Title keywords (highest precision)
+    if any(kw in title_lower for kw in ["intern", "internship", "trainee", "student"]):
         return "intern"
-    if any(kw in text for kw in ["co-op", "coop", "cooperative"]):
+    if any(kw in title_lower for kw in ["co-op", "coop", "cooperative"]):
         return "co-op"
-    if any(kw in text for kw in ["new grad", "new graduate", "entry level", "entry-level", "junior"]):
+    if any(kw in title_lower for kw in ["new grad", "new graduate", "entry level", "entry-level", "junior", "associate", "university graduate", "college graduate"]):
         return "new_grad"
-    return "other"
+
+    # Precedence 2: Description explicit keywords
+    if any(kw in text_lower for kw in ["internship position", "summer intern", "fall intern", "spring intern", "winter intern"]):
+        return "intern"
+    if any(kw in text_lower for kw in ["co-op position", "cooperative education"]):
+        return "co-op"
+    if any(kw in text_lower for kw in ["new grad position", "university recruiting", "early career", "entry-level position"]):
+        return "new_grad"
+
+    # Default for all full-time software engineering and professional roles
+    return "full_time"
+
 
 
 def is_remote(title: str, location: str = "", description: str = "") -> bool:

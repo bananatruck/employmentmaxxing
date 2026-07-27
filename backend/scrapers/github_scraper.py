@@ -39,6 +39,20 @@ def _clean_url(raw_text: str) -> str:
     return ""
 
 
+def _is_generic_domain(url: str) -> bool:
+    """Check if a URL is a generic root domain/homepage rather than a specific job posting."""
+    if not url:
+        return True
+    from urllib.parse import urlparse
+    parsed = urlparse(url)
+    path = parsed.path.strip('/')
+    if not path and not parsed.query:
+        return True
+    if path.lower() in ['careers', 'jobs', 'en-us', 'about', 'join-us', 'careers/'] and not parsed.query:
+        return True
+    return False
+
+
 def _strip_html_and_markdown(text: str) -> str:
     """Strip HTML tags and markdown formatting to get clean text."""
     if not text:
@@ -119,20 +133,23 @@ def _extract_job_from_row(cells: list[str], headers: list[str], repo_name: str) 
     apply_url = ""
 
     for key, value in data.items():
-        if any(kw in key for kw in ["company", "name", "org"]):
+        key_lower = key.lower()
+        if any(kw in key_lower for kw in ["company", "name", "org"]):
             company_raw = value
-            if not apply_url:
-                apply_url = _clean_url(value)
-        elif any(kw in key for kw in ["role", "position", "title", "job"]):
+        elif any(kw in key_lower for kw in ["role", "position", "title"]):
             title_raw = value
-            if not apply_url:
-                apply_url = _clean_url(value)
-        elif any(kw in key for kw in ["location", "loc"]):
+        elif any(kw in key_lower for kw in ["location", "loc"]):
             location_raw = value
-        elif any(kw in key for kw in ["link", "apply", "url"]):
+        elif any(kw in key_lower for kw in ["link", "apply", "url"]):
             clean_link = _clean_url(value)
             if clean_link:
                 apply_url = clean_link
+
+    # Fallback to title link if apply_url is empty but title has a link
+    if not apply_url and title_raw:
+        cand_url = _clean_url(title_raw)
+        if cand_url and not _is_generic_domain(cand_url):
+            apply_url = cand_url
 
     # Clean text values
     company = _strip_html_and_markdown(company_raw)

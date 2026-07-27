@@ -160,43 +160,19 @@ def _scrape_lever_company(company_slug: str) -> list[dict]:
 
 
 def run_company_ats_scrape() -> dict:
-    log_id = log_scrape_start("company_official_ats")
-    stats = {"jobs_found": 0, "jobs_new": 0, "jobs_duplicate": 0, "errors": []}
-
-    print("🏢 Scraping official company career portals (Greenhouse & Lever APIs)...")
-
-    for company in GREENHOUSE_COMPANIES:
-        try:
-            jobs = _scrape_greenhouse_company(company)
-            if jobs:
-                for job in jobs:
-                    is_new = insert_job(job)
-                    stats["jobs_found"] += 1
-                    if is_new:
-                        stats["jobs_new"] += 1
-                    else:
-                        stats["jobs_duplicate"] += 1
-        except Exception as e:
-            stats["errors"].append(f"Greenhouse {company}: {e}")
-        time.sleep(0.05)
-
-    for company in LEVER_COMPANIES:
-        try:
-            jobs = _scrape_lever_company(company)
-            if jobs:
-                for job in jobs:
-                    is_new = insert_job(job)
-                    stats["jobs_found"] += 1
-                    if is_new:
-                        stats["jobs_new"] += 1
-                    else:
-                        stats["jobs_duplicate"] += 1
-        except Exception as e:
-            stats["errors"].append(f"Lever {company}: {e}")
-        time.sleep(0.05)
-
-    log_scrape_end(log_id, stats["jobs_found"], stats["jobs_new"], stats["jobs_duplicate"], stats["errors"])
-    print(f"✅ Official Company ATS scrape complete: {stats['jobs_found']} found, {stats['jobs_new']} new, {stats['jobs_duplicate']} dupes")
+    """Run registry-backed incremental ATS crawler across Greenhouse & Workday."""
+    from scrapers.ats_engine import run_ats_scan_sync
+    print("🏢 Running global registry-backed ATS scanner (Greenhouse & Workday)...")
+    res = run_ats_scan_sync()
+    stats = {
+        "jobs_found": res.get("jobs_found", 0),
+        "jobs_new": res.get("jobs_new", 0),
+        "jobs_duplicate": res.get("jobs_duplicate", 0),
+        "jobs_updated": res.get("jobs_updated", 0),
+        "jobs_deactivated": res.get("jobs_deactivated", 0),
+        "errors": res.get("errors", []),
+    }
+    print(f"✅ Official Company ATS scrape complete: {stats['jobs_found']} found, {stats['jobs_new']} new, {stats['jobs_duplicate']} dupes, {stats['jobs_deactivated']} deactivated")
     return stats
 
 

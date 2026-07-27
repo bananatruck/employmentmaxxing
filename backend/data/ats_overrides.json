@@ -1,0 +1,18 @@
+{
+  "greenhouse": [
+    {
+      "board_token": "openai",
+      "company_name": "OpenAI"
+    },
+    {
+      "board_token": "anthropic",
+      "company_name": "Anthropic"
+    }
+  ],
+  "workday": [
+    {
+      "canonical_url": "https://nvidia.wd5.myworkdayjobs.com/NVIDIAExternalCareerSite",
+      "company_name": "NVIDIA"
+    }
+  ]
+}
