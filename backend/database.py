@@ -1,6 +1,7 @@
 """
 Employmentmaxxing — Database Layer
-SQLite database setup, schema, helper functions, multi-category checkboxes, 30-day freshness, and strict US/Remote location filtering.
+SQLite database setup, schema, helper functions, multi-category checkboxes, 30-day freshness,
+Defense contractor exclusions, citizenship/clearance exclusions, and strict date_posted sorting.
 """
 
 import sqlite3
@@ -9,6 +10,8 @@ import hashlib
 from datetime import datetime, timedelta
 from pathlib import Path
 from config import settings
+from utils.date_parser import normalize_posted_date
+from utils.exclusion_filter import is_job_eligible
 
 
 DB_PATH = settings.db_path
@@ -156,20 +159,24 @@ def generate_job_id(company: str, title: str, location: str = "") -> str:
 def is_us_location(location: str = "", title: str = "") -> bool:
     """Check if location is strictly US or US Remote."""
     text = f"{location} {title}".lower().strip()
-
-    # Reject explicit non-US locations
     for intl in INTERNATIONAL_KEYWORDS:
         if intl in text:
             return False
-
     return True
 
 
 def insert_job(job_data: dict) -> bool:
-    """Insert job into SQLite database."""
+    """Insert job into SQLite database after eligibility and location checks."""
     loc = job_data.get("location", "")
     title = job_data.get("title", "")
+    
+    # 1. Location check
     if not is_us_location(loc, title):
+        return False
+
+    # 2. Defense Contractor & Citizenship/Clearance exclusion check
+    eligible, _reason = is_job_eligible(job_data)
+    if not eligible:
         return False
 
     conn = get_connection()
@@ -195,7 +202,11 @@ def insert_job(job_data: dict) -> bool:
         conn.close()
         return False
 
-    now = datetime.now().isoformat()
+    now_iso = datetime.now().isoformat()
+    # Normalize posted date into standardized YYYY-MM-DD
+    raw_posted = job_data.get("date_posted")
+    clean_date_posted = normalize_posted_date(raw_posted, default_date=now_iso[:10])
+
     cursor.execute(
         """INSERT INTO jobs (id, title, company, location, is_remote, description,
            apply_url, salary_min, salary_max, date_posted, date_scraped, source,
@@ -211,8 +222,8 @@ def insert_job(job_data: dict) -> bool:
             job_data.get("apply_url", ""),
             job_data.get("salary_min"),
             job_data.get("salary_max"),
-            job_data.get("date_posted", ""),
-            now,
+            clean_date_posted,
+            now_iso,
             job_data.get("source", "unknown"),
             json.dumps([job_data.get("source", "unknown")]),
             job_data.get("experience_level", "intern"),
@@ -235,25 +246,26 @@ def get_jobs(
     source: str | None = None,
     search: str | None = None,
     max_days_old: int = 30,
-    sort_by: str = "highest_match",
+    sort_by: str = "earliest_release",  # Default: earliest_release (date_posted DESC)
 ) -> list[dict]:
-    """Fetch jobs with multi-category checkboxes, multi-job-type, US location enforcement, and flexible sorting."""
+    """Fetch jobs with category checkboxes, experience levels, and strict date_posted sorting."""
     conn = get_connection()
     query = """
-        SELECT j.*, cs.overall_score, cs.verdict, cs.apply_priority, cs.honest_take
+        SELECT j.*, cs.overall_score, cs.verdict, cs.apply_priority, cs.honest_take, ja.tech_stack
         FROM jobs j
         LEFT JOIN chance_scores cs ON j.id = cs.job_id
+        LEFT JOIN job_analysis ja ON j.id = ja.job_id
         WHERE j.is_active = TRUE
     """
     params: list = []
 
-    # 1. Multi-category checkboxes filter (AI/ML, SWE, Quantum, Data Science)
+    # 1. Multi-category checkboxes filter
     if job_types and len(job_types) > 0:
         placeholders = ",".join("?" for _ in job_types)
         query += f" AND j.job_type IN ({placeholders})"
         params.extend(job_types)
 
-    # 2. Multi experience level filter (intern, co-op, new_grad)
+    # 2. Multi experience level filter
     if experience_levels and len(experience_levels) > 0:
         placeholders = ",".join("?" for _ in experience_levels)
         query += f" AND j.experience_level IN ({placeholders})"
@@ -275,14 +287,17 @@ def get_jobs(
         params.extend([f"%{search}%"] * 3)
 
     # 6. Sorting logic
-    if sort_by == "highest_match":
-        query += " ORDER BY cs.overall_score DESC NULLS LAST, j.date_scraped DESC"
-    elif sort_by == "earliest_release":
-        query += " ORDER BY j.date_scraped DESC, j.date_posted DESC"
+    if sort_by == "earliest_release":
+        # Strict actual posted date sorting (newest posted first)
+        query += " ORDER BY j.date_posted DESC, j.date_scraped DESC"
+    elif sort_by == "date_scraped":
+        query += " ORDER BY j.date_scraped DESC"
+    elif sort_by == "highest_match":
+        query += " ORDER BY cs.overall_score DESC NULLS LAST, j.date_posted DESC"
     elif sort_by == "company":
         query += " ORDER BY j.company ASC"
     else:
-        query += " ORDER BY j.date_scraped DESC"
+        query += " ORDER BY j.date_posted DESC"
 
     query += " LIMIT ? OFFSET ?"
     params.extend([limit, offset])
@@ -290,9 +305,16 @@ def get_jobs(
     rows = conn.execute(query, params).fetchall()
     conn.close()
 
-    # Post-filter for US location
-    filtered_rows = [dict(row) for row in rows if is_us_location(row["location"], row["title"])]
-    return filtered_rows
+    # Filter out defense / clearance / international
+    results = []
+    for row in rows:
+        job = dict(row)
+        if is_us_location(job["location"], job["title"]):
+            eligible, _reason = is_job_eligible(job)
+            if eligible:
+                results.append(job)
+
+    return results
 
 
 def get_job_by_id(job_id: str) -> dict | None:
@@ -317,7 +339,7 @@ def get_job_by_id(job_id: str) -> dict | None:
 
 
 def get_job_count(job_types: list[str] | None = None) -> int:
-    """Get job count."""
+    """Get total eligible active job count."""
     conn = get_connection()
     if job_types and len(job_types) > 0:
         placeholders = ",".join("?" for _ in job_types)
@@ -392,7 +414,7 @@ def save_analysis(job_id: str, analysis: dict):
 
 
 def save_chance_score(job_id: str, score: dict):
-    """Save chance score."""
+    """Save score."""
     conn = get_connection()
     conn.execute(
         """INSERT OR REPLACE INTO chance_scores

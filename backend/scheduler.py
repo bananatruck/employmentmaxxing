@@ -55,11 +55,11 @@ def run_full_pipeline():
 
     # Step 4: Analyze
     print("\nStep 4/5: Analyzing new job descriptions...")
-    analysis_stats = run_analysis_pipeline(limit=100)
+    analysis_stats = run_analysis_pipeline(limit=500)
 
     # Step 5: Score
     print("\nStep 5/5: Scoring jobs against profile...")
-    scoring_stats = run_scoring_pipeline(limit=100)
+    scoring_stats = run_scoring_pipeline(limit=500)
 
     print(f"✨ [PIPELINE] Complete at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
 

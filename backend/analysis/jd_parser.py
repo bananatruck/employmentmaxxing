@@ -57,11 +57,14 @@ Respond ONLY with valid JSON in this exact format (no markdown, no explanation):
 """
 
 
+_gemini_quota_exhausted = False
+
 def analyze_job_with_ai(job: dict) -> dict | None:
-    """Analyze a job description using Gemini Flash."""
+    """Analyze a job description using Gemini AI. Falls back to regex if unavailable or quota hit."""
+    global _gemini_quota_exhausted
     client = _get_client()
-    if not client:
-        return None
+    if not client or _gemini_quota_exhausted:
+        return analyze_job_with_regex(job)
 
     description = job.get("description", "")
     if not description or len(description) < 50:
@@ -106,13 +109,10 @@ def analyze_job_with_ai(job: dict) -> dict | None:
 
         return analysis
 
-    except json.JSONDecodeError as e:
-        print(f"   ⚠️ JSON parse error for {job.get('company', '?')}: {e}")
-        return None
     except Exception as e:
-        print(f"   ❌ Gemini error for {job.get('company', '?')}: {e}")
-        traceback.print_exc()
-        return None
+        _gemini_quota_exhausted = True
+        print(f"   ⚠️ AI parse error/quota for {job.get('company', '?')}: {e} — falling back to fast regex parser for remaining jobs")
+        return analyze_job_with_regex(job)
 
 
 def analyze_job_with_regex(job: dict) -> dict:

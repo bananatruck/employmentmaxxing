@@ -27,8 +27,8 @@ class Settings(BaseSettings):
     gemini_model: str = "gemini-2.0-flash"  # Free-tier Flash model
 
     # ── Scraping Schedule ─────────────────────────────────────────────
-    scrape_interval_hours: int = 4  # Run every N hours
-    scrape_max_results_per_query: int = 25
+    scrape_interval_hours: int = 3  # Run every N hours
+    scrape_max_results_per_query: int = 300
     scrape_delay_seconds: float = 2.0  # Delay between queries (rate limiting)
 
     # ── Search Queries ────────────────────────────────────────────────
@@ -46,6 +46,31 @@ class Settings(BaseSettings):
         "computer vision intern",
         "data science intern",
         "MLOps intern",
+        "software engineer",
+        "software development engineer",
+        "backend engineer",
+        "frontend engineer",
+        "full stack engineer",
+        "data engineer",
+        "data analyst",
+        "machine learning engineer",
+        "AI engineer",
+        "computer vision engineer",
+        "NLP engineer",
+        "AI/ML intern",
+        "backend engineer intern",
+        "frontend engineer intern",
+        "full stack engineer intern",
+        "data engineer intern",
+        "data analyst intern",
+        "machine learning engineer intern",
+        "AI engineer intern",
+        "computer vision engineer intern",
+        "NLP engineer intern",
+        "AI/ML engineer",
+        "research intern",
+        "R&D intern",
+        "applied science intern"
     ]
 
     # ── Target Locations ──────────────────────────────────────────────
@@ -58,6 +83,7 @@ class Settings(BaseSettings):
         "speedyapply/2027-AI-College-Jobs",
         "speedyapply/2027-SWE-College-Jobs",
         "vanshb03/Summer2027-Internships",
+        "SimplifyJobs/Summer2026-Internships",
     ]
 
     # ── Frontend ──────────────────────────────────────────────────────

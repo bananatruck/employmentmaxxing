@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Employmentmaxxing — Telemetry AI Job Command Center</title>
+  <meta name="description" content="Cyber-telemetry job tracker for CS students targeting US AI/ML, SWE, and Quantum internships, co-ops, and entry-level roles.">
+  
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@500;600;700;800&display=swap" rel="stylesheet">
+  
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <link rel="icon" type="image/png" href="/static/nerv_logo.png">
+  <link rel="stylesheet" href="/static/css/style.css?v=3.0">
+</head>
+<body>
+
+  <!-- HUD Header -->
+  <header class="app-header">
+    <div class="brand">
+      <img src="/static/nerv_logo.png" alt="NERV Logo" style="height: 28px; width: 28px; object-fit: contain; filter: drop-shadow(0 0 6px rgba(255, 0, 0, 0.8)); margin-right: 0.35rem;">
+      Employmentmaxxing <span style="font-size: 0.65rem; color: var(--accent-purple); margin-left: 0.25rem;">[HUD v3.0 // NERV OPERATIONAL]</span>
+    </div>
+
+    <nav class="nav-links">
+      <div class="nav-item active" data-tab="feed">🔍 Job Feed</div>
+      <div class="nav-item" data-tab="tracker">📊 App Tracker</div>
+      <div class="nav-item" data-tab="profile">👤 My Profile</div>
+      <div class="nav-item" data-tab="analytics">📈 Analytics</div>
+    </nav>
+
+    <div class="header-actions">
+      <button class="btn-config-scrape" id="btn-open-scrape-config">⚙️ Custom Scrape</button>
+      <button class="btn-trigger-scrape" id="btn-trigger-scrape">⚡ Execute Scrape</button>
+    </div>
+  </header>
+
+  <!-- App Main Layout -->
+  <main class="app-container">
+
+    <!-- Telemetry Status Bar -->
+    <div class="system-status-bar">
+      <div class="status-item">
+        <span style="color: var(--accent-green);">● TELEMETRY ONLINE</span>
+      </div>
+      <div class="status-item">
+        REGION: <span class="status-val">UNITED STATES</span>
+      </div>
+      <div class="status-item">
+        LEVELS: <span class="status-val">INTERN / CO-OP / NEW GRAD</span>
+      </div>
+      <div class="status-item">
+        EXCLUSIONS: <span class="status-val">SENIOR & LEAD PURGED</span>
+      </div>
+    </div>
+
+    <!-- Tab 1: Job Feed -->
+    <section id="tab-feed" class="tab-content active">
+      <div class="feed-layout">
+        <!-- Sidebar Filters -->
+        <aside class="filters-sidebar" id="feed-filters-sidebar"></aside>
+
+        <!-- Cards Grid & Pagination -->
+        <div>
+          <div class="job-feed-header" style="display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 0.75rem;">
+            <div class="feed-stats" id="feed-job-count">Initializing position feed...</div>
+            <div id="job-cards-pagination-top"></div>
+          </div>
+          <div class="job-cards-grid" id="job-cards-grid"></div>
+          <div id="job-cards-pagination-bottom" style="margin-top: 1.5rem;"></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Tab 2: Application Tracker -->
+    <section id="tab-tracker" class="tab-content"></section>
+
+    <!-- Tab 3: Profile Editor -->
+    <section id="tab-profile" class="tab-content"></section>
+
+    <!-- Tab 4: Analytics -->
+    <section id="tab-analytics" class="tab-content"></section>
+
+  </main>
+
+  <!-- Scrape Configuration Modal -->
+  <div class="modal-overlay" id="scrape-config-modal">
+    <div class="modal-card" style="max-width: 500px;">
+      <div class="modal-header">
+        <div style="font-family: var(--font-mono); font-weight: 800; color: var(--accent-green);">⚙️ CUSTOM SCRAPE PIPELINE PARAMS</div>
+      </div>
+      <div class="modal-body">
+        <div class="form-group" style="margin-bottom: 1rem;">
+          <label class="form-label" style="font-size: 0.8rem; color: var(--accent-purple); font-family: var(--font-mono);">TARGET KEYWORDS / DOMAINS</label>
+          <input type="text" class="form-input" id="cfg-search-queries" value="AI ML intern, SWE intern 2027, quantum intern, co-op" style="background:#000; border:1px solid var(--border-purple); color:#fff; font-family:var(--font-mono);">
+        </div>
+        <div class="form-group" style="margin-bottom: 1rem;">
+          <label class="form-label" style="font-size: 0.8rem; color: var(--accent-purple); font-family: var(--font-mono);">TARGET SOURCES TO RUN</label>
+          <div class="checkbox-group" style="margin-top: 0.4rem;">
+            <label class="checkbox-label"><input type="checkbox" checked id="cfg-src-ats"> 🏢 Company Official ATS (Greenhouse & Lever)</label>
+            <label class="checkbox-label"><input type="checkbox" checked id="cfg-src-startups"> 🚀 Top 130 AI & Tech Startups (YC / a16z / Sequoia)</label>
+            <label class="checkbox-label"><input type="checkbox" checked id="cfg-src-jobspy"> 🌐 JobSpy (LinkedIn / Indeed / Glassdoor)</label>
+            <label class="checkbox-label"><input type="checkbox" checked id="cfg-src-github"> 🐙 GitHub Community Repos</label>
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn-sm btn-secondary" id="btn-close-scrape-modal">Cancel</button>
+        <button class="btn-sm btn-primary" id="btn-run-custom-scrape">⚡ Launch Scrape</button>
+      </div>
+    </div>
+  </div>
+
+  <script type="module" src="/static/js/app.js?v=4.0"></script>
+</body>
+</html>

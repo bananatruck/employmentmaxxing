@@ -5,6 +5,7 @@ Strips raw HTML tags, unescapes entities, purges Senior/Lead/Manager roles, and 
 
 import re
 import html
+# pyrefly: ignore [missing-import]
 from bs4 import BeautifulSoup
 import database
 
@@ -14,6 +15,30 @@ SENIOR_EXCLUSIONS = [
 ]
 
 ALLOWED_STUDENT_KWS = ["intern", "internship", "student", "co-op", "coop", "entry"]
+
+
+EXP_EXCLUSION_PATTERNS = [
+    r"\b(?:5|6|7|8|9|10|\d{2})\+?\s*(?:-\s*\d+\s*)?(?:years?|yrs?)\b",
+    r"\b5\s*\+\s*years\b",
+    r"\b5\s*to\s*10\s*years\b",
+    r"\b5-7\s*years\b",
+    r"\b5-10\s*years\b",
+    r"\bminimum\s*of\s*5\s*years\b",
+    r"\bat\s*least\s*5\s*years\b",
+]
+
+
+def requires_five_plus_years(title: str, description: str) -> bool:
+    """Check if job requires 5+ years of experience (unless intern/co-op/student)."""
+    t_lower = (title or "").lower()
+    if any(skw in t_lower for skw in ALLOWED_STUDENT_KWS):
+        return False
+
+    full_text = f"{title} {description}".lower()
+    for pattern in EXP_EXCLUSION_PATTERNS:
+        if re.search(pattern, full_text):
+            return True
+    return False
 
 
 def is_senior_role(title: str) -> bool:
@@ -65,8 +90,8 @@ def sanitize_all_jobs():
         location = strip_html(location_raw)
         description = strip_html(desc_raw)
 
-        # 1. Filter out Senior / Lead roles
-        if is_senior_role(title):
+        # 1. Filter out Senior / Lead roles or 5+ Years Experience
+        if is_senior_role(title) or requires_five_plus_years(title, description):
             conn.execute("DELETE FROM chance_scores WHERE job_id = ?", (job_id,))
             conn.execute("DELETE FROM job_analysis WHERE job_id = ?", (job_id,))
             conn.execute("DELETE FROM applications WHERE job_id = ?", (job_id,))

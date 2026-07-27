@@ -95,6 +95,21 @@ def update_user_profile(profile: ProfileSchema):
     # Automatically re-score jobs with updated profile
     from analysis.chance_scorer import run_scoring_pipeline
     import threading
-    threading.Thread(target=run_scoring_pipeline, kwargs={"limit": 100}, daemon=True).start()
+    threading.Thread(target=run_scoring_pipeline, kwargs={"limit": 300}, daemon=True).start()
 
     return {"status": "success", "message": "Profile updated. Background re-scoring started."}
+
+
+@router.get("/resume")
+def get_user_resume():
+    """Get resume file information and preview URL."""
+    from pathlib import Path
+    static_file = Path(__file__).resolve().parent.parent / "static" / "Keshav_Jindal.pdf"
+    exists = static_file.exists()
+    return {
+        "filename": "Keshav_Jindal.pdf",
+        "exists": exists,
+        "url": "/static/Keshav_Jindal.pdf",
+        "size_bytes": static_file.stat().st_size if exists else 0,
+        "title": "Keshav Jindal — Software Engineer & AI Researcher Resume"
+    }

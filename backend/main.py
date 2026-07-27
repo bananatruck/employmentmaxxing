@@ -60,6 +60,15 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+@app.middleware("http")
+async def add_no_cache_header(request, call_next):
+    response = await call_next(request)
+    if request.url.path.startswith("/static") or request.url.path == "/":
+        response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate, max-age=0"
+        response.headers["Pragma"] = "no-cache"
+        response.headers["Expires"] = "0"
+    return response
+
 # Include API Routers
 app.include_router(jobs.router)
 app.include_router(profile.router)
@@ -83,7 +92,7 @@ def read_root():
     """Serve main frontend SPA dashboard."""
     index_file = frontend_path / "index.html"
     if index_file.exists():
-        return FileResponse(index_file)
+        return FileResponse(index_file, headers={"Cache-Control": "no-cache, no-store, must-revalidate"})
     return JSONResponse({
         "app": settings.app_name,
         "status": "backend running",
