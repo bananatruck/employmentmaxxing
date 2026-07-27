@@ -160,9 +160,9 @@ def _scrape_lever_company(company_slug: str) -> list[dict]:
 
 
 def run_company_ats_scrape() -> dict:
-    """Run registry-backed incremental ATS crawler across Greenhouse & Workday."""
+    """Run registry-backed incremental ATS crawler across global providers (Greenhouse, Workday, Lever, Ashby, SmartRecruiters, BambooHR)."""
     from scrapers.ats_engine import run_ats_scan_sync
-    print("🏢 Running global registry-backed ATS scanner (Greenhouse & Workday)...")
+    print("🏢 Running global registry-backed ATS scanner (Greenhouse, Workday, Lever, Ashby, SmartRecruiters, BambooHR)...")
     res = run_ats_scan_sync()
     stats = {
         "jobs_found": res.get("jobs_found", 0),

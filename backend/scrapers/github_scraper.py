@@ -17,26 +17,43 @@ RAW_BASE = "https://raw.githubusercontent.com"
 
 
 def _clean_url(raw_text: str) -> str:
-    """Extract a clean http/https URL from raw text, HTML tags, or markdown links."""
+    """Extract a clean http/https URL from raw text, HTML tags, or markdown links, removing tracking params."""
     if not raw_text:
         return ""
 
+    candidate = ""
     # Match href="URL" from HTML anchor tags
     href_match = re.search(r'href=["\'](https?://[^"\']+)["\']', raw_text, re.IGNORECASE)
     if href_match:
-        return href_match.group(1).strip()
+        candidate = href_match.group(1).strip()
+    else:
+        # Match markdown link [Text](URL)
+        md_match = re.search(r'\[.*?\]\((https?://[^\)]+)\)', raw_text)
+        if md_match:
+            candidate = md_match.group(1).strip()
+        else:
+            # Match standalone http/https URL
+            raw_url_match = re.search(r'(https?://[^\s<>"]+)', raw_text)
+            if raw_url_match:
+                candidate = raw_url_match.group(1).strip()
 
-    # Match markdown link [Text](URL)
-    md_match = re.search(r'\[.*?\]\((https?://[^\)]+)\)', raw_text)
-    if md_match:
-        return md_match.group(1).strip()
+    if not candidate:
+        return ""
 
-    # Match standalone http/https URL
-    raw_url_match = re.search(r'(https?://[^\s<>"]+)', raw_text)
-    if raw_url_match:
-        return raw_url_match.group(1).strip()
+    # Strip tracking query parameters
+    try:
+        from urllib.parse import urlparse, parse_qs, urlencode, urlunparse
+        parsed = urlparse(candidate)
+        if parsed.query:
+            qs = parse_qs(parsed.query)
+            # Filter out tracking keys
+            clean_qs = {k: v for k, v in qs.items() if not k.lower().startswith(('utm_', 'ref', 'gh_src', 'source', 'subscriber'))}
+            new_query = urlencode(clean_qs, doseq=True)
+            candidate = urlunparse((parsed.scheme, parsed.netloc, parsed.path, parsed.params, new_query, parsed.fragment))
+    except Exception:
+        pass
 
-    return ""
+    return candidate
 
 
 def _is_generic_domain(url: str) -> bool:
@@ -166,6 +183,13 @@ def _extract_job_from_row(cells: list[str], headers: list[str], repo_name: str) 
 
     if not title:
         title = "Technical Intern / Co-op"
+
+    # Auto-register ATS boards discovered in GitHub links
+    try:
+        from scrapers.registry import discover_board_from_url
+        discover_board_from_url(apply_url, company_name=company, source="github_community")
+    except Exception:
+        pass
 
     from scrapers.jobspy_scraper import classify_job_type, detect_experience_level, is_remote
 

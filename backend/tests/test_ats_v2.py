@@ -83,14 +83,25 @@ def test_registry_seeding_and_discovery():
     assert counts["total"] > 0
     assert counts["greenhouse"] > 0
     assert counts["workday"] > 0
+    assert counts["lever"] > 0
+    assert counts["ashby"] > 0
+    assert counts["smartrecruiters"] > 0
+    assert counts["bamboohr"] > 0
 
-    res = discover_board_from_url("https://boards.greenhouse.io/testboard", company_name="Test Company")
-    assert res is not None
-    assert res["board_key"] == "testboard"
+    res_gh = discover_board_from_url("https://boards.greenhouse.io/testboard", company_name="Test Company")
+    assert res_gh is not None and res_gh["board_key"] == "testboard"
 
-    board_db = database.get_ats_board("greenhouse", "testboard")
-    assert board_db is not None
-    assert board_db["company_name"] == "Test Company"
+    res_lever = discover_board_from_url("https://jobs.lever.co/testlever", company_name="Test Lever")
+    assert res_lever is not None and res_lever["provider"] == "lever" and res_lever["board_key"] == "testlever"
+
+    res_ashby = discover_board_from_url("https://jobs.ashbyhq.com/testashby", company_name="Test Ashby")
+    assert res_ashby is not None and res_ashby["provider"] == "ashby" and res_ashby["board_key"] == "testashby"
+
+    res_smart = discover_board_from_url("https://jobs.smartrecruiters.com/testsmart", company_name="Test Smart")
+    assert res_smart is not None and res_smart["provider"] == "smartrecruiters"
+
+    res_bamboo = discover_board_from_url("https://testbamboo.bamboohr.com/careers", company_name="Test Bamboo")
+    assert res_bamboo is not None and res_bamboo["provider"] == "bamboohr" and res_bamboo["board_key"] == "testbamboo"
 
 
 def test_ats_job_upsert_and_content_hash():

@@ -22,7 +22,14 @@ from database import (
     update_ats_board_scan_status,
     upsert_ats_job,
 )
-from scrapers.adapters import GreenhouseAdapter, WorkdayAdapter
+from scrapers.adapters import (
+    GreenhouseAdapter,
+    WorkdayAdapter,
+    LeverAdapter,
+    AshbyAdapter,
+    SmartRecruitersAdapter,
+    BambooHRAdapter,
+)
 from scrapers.registry import seed_default_registry
 
 USER_AGENT = "Employmentmaxxing/2.1 (contact@employmentmaxxing.internal; +https://github.com/keshjindal/employmentmaxxing)"
@@ -35,6 +42,10 @@ class ATSCrawlEngine:
         self.adapters = {
             "greenhouse": GreenhouseAdapter(),
             "workday": WorkdayAdapter(),
+            "lever": LeverAdapter(),
+            "ashby": AshbyAdapter(),
+            "smartrecruiters": SmartRecruitersAdapter(),
+            "bamboohr": BambooHRAdapter(),
         }
         self.global_limit = getattr(settings, "ats_concurrency_limit", 15)
         self.per_host_limit = getattr(settings, "ats_per_host_concurrency", 3)
@@ -160,7 +171,11 @@ async def run_ats_incremental_scan(providers: list[str] | None = None) -> dict[s
 
     try:
         seed_default_registry()
-        enabled = providers or getattr(settings, "ats_enabled_providers", ["greenhouse", "workday"])
+        enabled = providers or getattr(
+            settings,
+            "ats_enabled_providers",
+            ["greenhouse", "workday", "lever", "ashby", "smartrecruiters", "bamboohr"],
+        )
 
         all_boards = []
         for p in enabled:

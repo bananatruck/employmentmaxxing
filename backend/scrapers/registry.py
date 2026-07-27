@@ -12,7 +12,11 @@ from config import settings
 from database import upsert_ats_board, get_ats_boards
 from scrapers.adapters.greenhouse import validate_greenhouse_token, is_approved_host as is_greenhouse_approved_host
 from scrapers.adapters.workday import parse_workday_url
-from scrapers.company_ats_scraper import GREENHOUSE_COMPANIES
+from scrapers.adapters.lever import validate_lever_slug
+from scrapers.adapters.ashby import validate_ashby_slug
+from scrapers.adapters.smartrecruiters import validate_smartrecruiters_slug
+from scrapers.adapters.bamboohr import validate_bamboohr_slug
+from scrapers.company_ats_scraper import GREENHOUSE_COMPANIES, LEVER_COMPANIES
 
 DATA_DIR = Path(getattr(settings, "data_dir", Path(__file__).resolve().parent.parent / "data"))
 CACHE_FILE = Path(getattr(settings, "ats_cache_file", DATA_DIR / "external_boards_cache.json"))
@@ -38,6 +42,18 @@ WORKDAY_DEFAULT_BOARDS = [
     },
 ]
 
+ASHBY_DEFAULT_SLUGS = [
+    "openai", "notion", "ramp", "linear", "sentry", "resend", "clerk", "postman", "vllm"
+]
+
+SMARTRECRUITERS_DEFAULT_SLUGS = [
+    "square", "block", "visa", "bosch", "ubisoft", "spotify"
+]
+
+BAMBOOHR_DEFAULT_SLUGS = [
+    "postman", "sourcegraph"
+]
+
 
 def discover_board_from_url(raw_url: str, company_name: str = "", source: str = "url_scraper") -> dict[str, Any] | None:
     """
@@ -48,9 +64,10 @@ def discover_board_from_url(raw_url: str, company_name: str = "", source: str = 
         return None
 
     url = raw_url.strip()
+    url_lower = url.lower()
 
     # 1. Greenhouse URL check
-    if "greenhouse.io" in url.lower():
+    if "greenhouse.io" in url_lower:
         try:
             parsed = urlparse(url)
             if not is_greenhouse_approved_host(url):
@@ -58,7 +75,6 @@ def discover_board_from_url(raw_url: str, company_name: str = "", source: str = 
             path_parts = [p for p in parsed.path.strip("/").split("/") if p]
             token = None
             if "boards" in path_parts and len(path_parts) >= 2:
-                # https://boards-api.greenhouse.io/v1/boards/{token}/jobs
                 idx = path_parts.index("boards")
                 if idx + 1 < len(path_parts):
                     token = path_parts[idx + 1]
@@ -81,7 +97,7 @@ def discover_board_from_url(raw_url: str, company_name: str = "", source: str = 
             pass
 
     # 2. Workday URL check
-    if "myworkdayjobs.com" in url.lower():
+    if "myworkdayjobs.com" in url_lower:
         parsed_wd = parse_workday_url(url)
         if parsed_wd:
             tenant = parsed_wd["tenant"]
@@ -102,6 +118,94 @@ def discover_board_from_url(raw_url: str, company_name: str = "", source: str = 
             }
             upsert_ats_board(board_data)
             return board_data
+
+    # 3. Lever URL check
+    if "lever.co" in url_lower:
+        try:
+            parsed = urlparse(url)
+            path_parts = [p for p in parsed.path.strip("/").split("/") if p]
+            if path_parts:
+                slug = path_parts[0]
+                if validate_lever_slug(slug):
+                    clean_name = company_name or slug.replace("-", " ").title()
+                    board_data = {
+                        "provider": "lever",
+                        "board_key": slug,
+                        "company_name": clean_name,
+                        "board_token": slug,
+                        "canonical_url": f"https://jobs.lever.co/{slug}",
+                        "discovery_source": source,
+                    }
+                    upsert_ats_board(board_data)
+                    return board_data
+        except Exception:
+            pass
+
+    # 4. Ashby URL check
+    if "ashbyhq.com" in url_lower:
+        try:
+            parsed = urlparse(url)
+            path_parts = [p for p in parsed.path.strip("/").split("/") if p]
+            if path_parts:
+                slug = path_parts[0]
+                if validate_ashby_slug(slug):
+                    clean_name = company_name or slug.replace("-", " ").title()
+                    board_data = {
+                        "provider": "ashby",
+                        "board_key": slug,
+                        "company_name": clean_name,
+                        "board_token": slug,
+                        "canonical_url": f"https://jobs.ashbyhq.com/{slug}",
+                        "discovery_source": source,
+                    }
+                    upsert_ats_board(board_data)
+                    return board_data
+        except Exception:
+            pass
+
+    # 5. SmartRecruiters URL check
+    if "smartrecruiters.com" in url_lower:
+        try:
+            parsed = urlparse(url)
+            path_parts = [p for p in parsed.path.strip("/").split("/") if p]
+            if path_parts:
+                slug = path_parts[0]
+                if validate_smartrecruiters_slug(slug):
+                    clean_name = company_name or slug.replace("-", " ").title()
+                    board_data = {
+                        "provider": "smartrecruiters",
+                        "board_key": slug,
+                        "company_name": clean_name,
+                        "board_token": slug,
+                        "canonical_url": f"https://jobs.smartrecruiters.com/{slug}",
+                        "discovery_source": source,
+                    }
+                    upsert_ats_board(board_data)
+                    return board_data
+        except Exception:
+            pass
+
+    # 6. BambooHR URL check
+    if "bamboohr.com" in url_lower:
+        try:
+            parsed = urlparse(url)
+            host_parts = parsed.netloc.lower().split(".")
+            if len(host_parts) >= 3 and "bamboohr" in host_parts[-2]:
+                slug = host_parts[0]
+                if validate_bamboohr_slug(slug):
+                    clean_name = company_name or slug.replace("-", " ").title()
+                    board_data = {
+                        "provider": "bamboohr",
+                        "board_key": slug,
+                        "company_name": clean_name,
+                        "board_token": slug,
+                        "canonical_url": f"https://{slug}.bamboohr.com/careers",
+                        "discovery_source": source,
+                    }
+                    upsert_ats_board(board_data)
+                    return board_data
+        except Exception:
+            pass
 
     return None
 
@@ -127,6 +231,30 @@ def load_user_overrides() -> list[dict[str, Any]]:
                             "canonical_url": f"https://boards.greenhouse.io/{token}",
                             "discovery_source": "user_override",
                         })
+                # Lever overrides
+                for item in data.get("lever", []):
+                    slug = item.get("board_token") or item.get("board_key")
+                    if slug and validate_lever_slug(slug):
+                        results.append({
+                            "provider": "lever",
+                            "board_key": slug,
+                            "company_name": item.get("company_name", slug.replace("-", " ").title()),
+                            "board_token": slug,
+                            "canonical_url": f"https://jobs.lever.co/{slug}",
+                            "discovery_source": "user_override",
+                        })
+                # Ashby overrides
+                for item in data.get("ashby", []):
+                    slug = item.get("board_token") or item.get("board_key")
+                    if slug and validate_ashby_slug(slug):
+                        results.append({
+                            "provider": "ashby",
+                            "board_key": slug,
+                            "company_name": item.get("company_name", slug.replace("-", " ").title()),
+                            "board_token": slug,
+                            "canonical_url": f"https://jobs.ashbyhq.com/{slug}",
+                            "discovery_source": "user_override",
+                        })
                 # Workday overrides
                 for item in data.get("workday", []):
                     url = item.get("canonical_url", "")
@@ -149,7 +277,7 @@ def load_user_overrides() -> list[dict[str, Any]]:
 
 
 def seed_default_registry():
-    """Seed database with default Greenhouse & Workday boards."""
+    """Seed database with default ATS boards across Greenhouse, Lever, Workday, Ashby, SmartRecruiters, BambooHR."""
     DATA_DIR.mkdir(parents=True, exist_ok=True)
 
     # 1. Greenhouse defaults
@@ -164,14 +292,63 @@ def seed_default_registry():
                 "discovery_source": "seed_default",
             })
 
-    # 2. Workday defaults
+    # 2. Lever defaults
+    for company in LEVER_COMPANIES:
+        if validate_lever_slug(company):
+            upsert_ats_board({
+                "provider": "lever",
+                "board_key": company,
+                "company_name": company.replace("-", " ").title(),
+                "board_token": company,
+                "canonical_url": f"https://jobs.lever.co/{company}",
+                "discovery_source": "seed_default",
+            })
+
+    # 3. Workday defaults
     for item in WORKDAY_DEFAULT_BOARDS:
         discover_board_from_url(item["canonical_url"], company_name=item["company_name"], source="seed_default")
 
-    # 3. User overrides
+    # 4. Ashby defaults
+    for slug in ASHBY_DEFAULT_SLUGS:
+        if validate_ashby_slug(slug):
+            upsert_ats_board({
+                "provider": "ashby",
+                "board_key": slug,
+                "company_name": slug.replace("-", " ").title(),
+                "board_token": slug,
+                "canonical_url": f"https://jobs.ashbyhq.com/{slug}",
+                "discovery_source": "seed_default",
+            })
+
+    # 5. SmartRecruiters defaults
+    for slug in SMARTRECRUITERS_DEFAULT_SLUGS:
+        if validate_smartrecruiters_slug(slug):
+            upsert_ats_board({
+                "provider": "smartrecruiters",
+                "board_key": slug,
+                "company_name": slug.replace("-", " ").title(),
+                "board_token": slug,
+                "canonical_url": f"https://jobs.smartrecruiters.com/{slug}",
+                "discovery_source": "seed_default",
+            })
+
+    # 6. BambooHR defaults
+    for slug in BAMBOOHR_DEFAULT_SLUGS:
+        if validate_bamboohr_slug(slug):
+            upsert_ats_board({
+                "provider": "bamboohr",
+                "board_key": slug,
+                "company_name": slug.replace("-", " ").title(),
+                "board_token": slug,
+                "canonical_url": f"https://{slug}.bamboohr.com/careers",
+                "discovery_source": "seed_default",
+            })
+
+    # 7. User overrides
     overrides = load_user_overrides()
     for board in overrides:
         upsert_ats_board(board)
+
 
 
 def refresh_external_registry() -> dict[str, int]:
@@ -181,9 +358,19 @@ def refresh_external_registry() -> dict[str, int]:
     """
     seed_default_registry()
     boards = get_ats_boards()
-    counts = {"total": len(boards), "greenhouse": 0, "workday": 0}
+    counts = {
+        "total": len(boards),
+        "greenhouse": 0,
+        "workday": 0,
+        "lever": 0,
+        "ashby": 0,
+        "smartrecruiters": 0,
+        "bamboohr": 0,
+    }
     for b in boards:
         p = b.get("provider")
-        if p in counts:
+        if p and p in counts:
             counts[p] += 1
+        elif p:
+            counts[p] = 1
     return counts
