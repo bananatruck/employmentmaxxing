@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="description" content="Employmentmaxxing is a self-hosted telemetry job command center for CS students targeting US internships, co-ops, and entry-level roles.">
+    <meta name="theme-color" content="#0a0a0e">
+    <title>Employmentmaxxing — Job search telemetry</title>
+    <link rel="stylesheet" href="styles.css">
+  </head>
+  <body>
+    <a class="skip-link" href="#main">Skip to content</a>
+    <div class="alert"><span>●</span> NERV JOB INTELLIGENCE SYSTEM <b>// SELF-HOSTED</b></div>
+    <header>
+      <a class="brand" href="#top" aria-label="Employmentmaxxing home"><span class="nerv-mark">N</span><span>Employment<span>maxxing</span></span></a>
+      <nav aria-label="Primary navigation"><a href="#intel">Intel</a><a href="#scoring">Scoring</a><a href="#pipeline">Pipeline</a><a href="#stack">System</a></nav>
+      <a class="repo" href="https://github.com/bananatruck/employmentmaxxing">GitHub <span>↗</span></a>
+    </header>
+
+    <main id="main">
+      <section class="hero" id="top">
+        <div class="scan-line" aria-hidden="true"></div>
+        <div class="hero-copy">
+          <p class="eyebrow">US AI/ML · SWE · Quantum roles</p>
+          <h1>Find the signal.<br><em>Track every move.</em></h1>
+          <p class="lede">A free, self-hosted command center that gathers early-career roles from official company systems, verifies direct application links, scores fit against your background, and tracks every application.</p>
+          <div class="actions"><a class="button primary" href="https://github.com/bananatruck/employmentmaxxing">Deploy it yourself <span>↗</span></a><a class="button secondary" href="#intel">View capabilities <span>↓</span></a></div>
+          <div class="scope"><span><i></i> Internships</span><span><i></i> Co-ops</span><span><i></i> Entry level</span><span><i></i> US + US remote</span></div>
+        </div>
+
+        <div class="dashboard" aria-label="Employmentmaxxing dashboard preview">
+          <div class="dash-top"><div><span class="nerv-mark small">N</span><b>JOB FEED</b></div><small>LAST SYNC 09:42:18</small><i>LIVE</i></div>
+          <div class="dash-body">
+            <aside><b>COMMAND</b><a class="active">▦ Job Intel</a><a>◫ App Tracker</a><a>◉ Profile</a><a>⌁ Analytics</a><span>SOURCES</span><p><i></i> Official ATS</p><p><i></i> Startup boards</p><p><i></i> Community feeds</p></aside>
+            <section class="feed">
+              <div class="feed-head"><div><small>POSITION FEED</small><b>High-signal matches</b></div><button type="button" aria-label="Decorative filter control">FILTER: ≥ 70</button></div>
+              <article class="job"><div class="company">A</div><div><small>ANTHROPIC · SAN FRANCISCO, CA</small><b>Software Engineer, Early Career</b><span>Python&nbsp;&nbsp; TypeScript&nbsp;&nbsp; Systems</span></div><div class="match"><strong>91</strong><small>MATCH</small></div></article>
+              <article class="job"><div class="company violet">Q</div><div><small>QUANTUM LAB · US REMOTE</small><b>Quantum Software Intern</b><span>Python&nbsp;&nbsp; Qiskit&nbsp;&nbsp; Research</span></div><div class="match"><strong>84</strong><small>MATCH</small></div></article>
+              <article class="job"><div class="company blue">C</div><div><small>CLOUDFLARE · AUSTIN, TX</small><b>Software Engineer — New Grad</b><span>Go&nbsp;&nbsp; Networking&nbsp;&nbsp; Linux</span></div><div class="match"><strong>78</strong><small>MATCH</small></div></article>
+            </section>
+          </div>
+          <div class="dash-foot"><span>312 ACTIVE ROLES</span><span>27 NEW TODAY</span><span>04 HIGH MATCH</span></div>
+        </div>
+      </section>
+
+      <section class="intel" id="intel">
+        <div class="section-heading"><p class="eyebrow">INTEL / 01</p><h2>More signal.<br>Less job-board noise.</h2><p>Employmentmaxxing combines approved public sources, normalizes each result, removes obvious senior roles, and prioritizes direct employer application links.</p></div>
+        <div class="source-map">
+          <div class="source-card"><small>OFFICIAL ATS</small><b>Greenhouse · Lever · Workday</b><span>direct company listings</span></div>
+          <div class="source-card"><small>STARTUPS</small><b>YC + portfolio boards</b><span>early team opportunities</span></div>
+          <div class="source-card"><small>DISCOVERY</small><b>JobSpy · GitHub · HN</b><span>broader lead generation</span></div>
+          <i>↓</i><i>↓</i><i>↓</i>
+          <div class="processor"><span>NORMALIZE</span><span>ELIGIBILITY</span><span>DEDUPLICATE</span><span>VERIFY URL</span><b>→ CLEAN POSITION FEED</b></div>
+        </div>
+      </section>
+
+      <section class="scoring" id="scoring">
+        <div class="score-console">
+          <div class="console-head"><span>FIT_ANALYSIS.EXE</span><i>PROFILE CALIBRATED</i></div>
+          <div class="ring"><strong>87</strong><span>OVERALL FIT</span></div>
+          <div class="bars"><p><span>Skills match</span><i style="--score:92%"></i><b>92</b></p><p><span>Experience</span><i style="--score:78%"></i><b>78</b></p><p><span>Education</span><i style="--score:95%"></i><b>95</b></p><p><span>Projects</span><i style="--score:84%"></i><b>84</b></p></div>
+          <p class="verdict"><span>RECOMMENDATION</span> Strong target. Emphasize distributed systems project and Python tooling.</p>
+        </div>
+        <div><p class="eyebrow">SCORING / 02</p><h2>An honest score, tied to your profile.</h2><p>Each role gets a seven-factor resume match score calibrated against your own skills, education, projects, location, and experience—not a generic keyword count.</p><ul><li>Inspect the reasoning behind each score</li><li>See strengths, gaps, and targeted advice</li><li>Keep profile data in your self-hosted system</li></ul></div>
+      </section>
+
+      <section class="pipeline" id="pipeline">
+        <div class="section-heading"><p class="eyebrow">TRACKING / 03</p><h2>Every application has a state.</h2><p>Move opportunities through a six-stage board and keep the full job-search operation visible in one place.</p></div>
+        <div class="kanban" aria-label="Application pipeline preview">
+          <article><header><b>INTERESTED</b><span>12</span></header><div><small>OpenAI</small><b>Software Engineer</b><span>match 88</span></div><div><small>Scale AI</small><b>ML Platform Intern</b><span>match 82</span></div></article>
+          <article><header><b>APPLIED</b><span>08</span></header><div><small>Cloudflare</small><b>New Grad Engineer</b><span>2 days ago</span></div><div><small>Figma</small><b>Security Intern</b><span>5 days ago</span></div></article>
+          <article><header><b>SCREENING</b><span>03</span></header><div class="hot"><small>Anthropic</small><b>Research Tools</b><span>call tomorrow</span></div></article>
+          <article><header><b>INTERVIEW</b><span>01</span></header><div class="hot"><small>Quantum Lab</small><b>Software Intern</b><span>round 2</span></div></article>
+        </div>
+      </section>
+
+      <section class="stack" id="stack">
+        <div><p class="eyebrow">SYSTEM / 04</p><h2>Personal infrastructure for a hard search.</h2><p>FastAPI serves the intelligence engine and APIs. A lightweight JavaScript dashboard presents the feed, pipeline, profile, and analytics. APScheduler keeps sources fresh, while SQLite stores the local operating picture.</p><a href="https://github.com/bananatruck/employmentmaxxing#-quick-start">Read the setup guide ↗</a></div>
+        <div class="stack-grid"><span><small>API</small><b>FastAPI</b></span><span><small>DATA</small><b>SQLite</b></span><span><small>SCHEDULE</small><b>APScheduler</b></span><span><small>SCRAPING</small><b>HTTPX + BS4</b></span><span><small>ANALYSIS</small><b>Profile scoring</b></span><span><small>UI</small><b>Vanilla JS</b></span></div>
+      </section>
+
+      <section class="cta"><p class="eyebrow">OPEN SOURCE · SELF-HOSTED</p><h2>Run your job search like an operation.</h2><a class="button light" href="https://github.com/bananatruck/employmentmaxxing">View Employmentmaxxing on GitHub <span>↗</span></a></section>
+    </main>
+    <footer><a class="brand" href="#top"><span class="nerv-mark">N</span><span>Employment<span>maxxing</span></span></a><p>Telemetry for the early-career job search.</p><a href="https://github.com/bananatruck/employmentmaxxing">Source ↗</a></footer>
+  </body>
+</html>
